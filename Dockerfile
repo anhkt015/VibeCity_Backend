@@ -14,6 +14,9 @@ RUN dotnet publish -c Release -o out
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /app/out .
+# THÊM DÒNG NÀY ĐỂ RENDER BIẾT CỔNG NÀO
+EXPOSE 5057
+ENV ASPNETCORE_URLS=http://+:5057
 
 # Lưu ý: Chữ VibeCity_API.dll phải khớp với tên project của ông
 ENTRYPOINT ["dotnet", "VibeCity_API.dll"]
