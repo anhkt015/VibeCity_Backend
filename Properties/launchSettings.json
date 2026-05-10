@@ -1,0 +1,15 @@
+﻿{
+    "$schema": "https://json.schemastore.org/launchsettings.json",
+    "profiles": {
+        "http": {
+            "commandName": "Project",
+            "dotnetRunMessages": true,
+            "launchBrowser": false,
+            // SỬA DÒNG NÀY: Thêm IP máy ông vào sau localhost
+            "applicationUrl": "http://localhost:5057;http://192.168.1.10:5057",
+            "environmentVariables": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            }
+        }
+    }
+}
