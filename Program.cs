@@ -6,29 +6,35 @@ using Microsoft.Extensions.Hosting;
 using VibeCity_API.Data;
 
 var builder = WebApplication.CreateBuilder(args);
-/* builder.Services.AddDbContext<AppDbContext>(options =>
-options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));*/
+
+// 1. Cấu hình Database (Npgsql cho Supabase)
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// --- CẤU HÌNH QUAN TRỌNG ĐỂ THÔNG MẠNG ---
+// --- THÊM DÒNG NÀY ĐỂ BẬT SWAGGER ---
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+// ------------------------------------
+
 builder.WebHost.ConfigureKestrel(serverOptions =>
 {
-    // Lắng nghe cổng 5057 từ tất cả các địa chỉ IP (bao gồm cả máy Nhật Anh)
     serverOptions.ListenAnyIP(5057);
 });
 
-// 1. Đăng ký dịch vụ Controller
 builder.Services.AddControllers();
 
 var app = builder.Build();
 
-// 2. Cấu hình Middleware
-// Tạm thời comment HttpsRedirection để test qua HTTP (cổng 5057) cho ổn định
-// app.UseHttpsRedirection(); 
+// --- BẬT SWAGGER TRÊN PRODUCTION (RENDER) ---
+// Đưa ra ngoài if (app.Environment.IsDevelopment()) để Render cũng xem được
+app.UseSwagger();
+app.UseSwaggerUI(c => {
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "VibeCity API V1");
+    c.RoutePrefix = "swagger"; // Đường dẫn sẽ là /swagger
+});
+// --------------------------------------------
 
 app.UseAuthorization();
 app.MapControllers();
 
-// 3. Chạy ứng dụng
 app.Run();
