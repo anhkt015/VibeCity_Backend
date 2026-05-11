@@ -2,13 +2,13 @@ using System;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
-using Newtonsoft.Json; // Đảm bảo ông đã cài gói NuGet Newtonsoft.Json nhé
+using Newtonsoft.Json; // Hãy chắc chắn ông đã cài Newtonsoft.Json qua NuGet
 
 namespace Google_GenerativeAI
 {
     public class AiResponse
     {
-        // Thêm dấu ? để xử lý cảnh báo CS8618 (Non-nullable property)
+        // Sử dụng string? để giải quyết cảnh báo CS8618
         public string? Text { get; set; }
     }
 
@@ -16,7 +16,8 @@ namespace Google_GenerativeAI
     {
         private readonly string _apiKey;
         private readonly string _model;
-        // Dùng static HttpClient để tránh lỗi "Socket Exhaustion" khi chạy trên server
+
+        // Sử dụng static HttpClient là chuẩn xác để chạy ổn định trên Render
         private static readonly HttpClient _client = new HttpClient();
 
         public GenerativeModel(string apiKey, string model)
@@ -29,46 +30,52 @@ namespace Google_GenerativeAI
         {
             try
             {
-                // URL chuẩn của Google Gemini API
+                // Đảm bảo URL sử dụng v1beta hoặc v1 tùy theo key của ông
                 string url = $"https://generativelanguage.googleapis.com/v1beta/models/{_model}:generateContent?key={_apiKey}";
 
-                // Payload theo đúng cấu trúc JSON mà Gemini yêu cầu
+                // SỬA LỖI 400: Định nghĩa cấu trúc Object tường minh thay vì dùng kiểu ẩn danh lồng nhau phức tạp
                 var payload = new
                 {
                     contents = new[]
                     {
-                        new { parts = new[] { new { text = prompt } } }
+                        new
+                        {
+                            parts = new[]
+                            {
+                                new { text = prompt }
+                            }
+                        }
                     }
                 };
 
                 string json = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                // Gửi request POST
+                // Gửi request POST đến Google
                 var response = await _client.PostAsync(url, content);
                 var responseBody = await response.Content.ReadAsStringAsync();
-                if (!response.IsSuccessStatusCode)
-                {
-                    // Dòng này sẽ in chi tiết lỗi từ Google lên console của Render
-                    Console.WriteLine($"❌ Gemini API Error: {responseBody}");
-                    return new AiResponse { Text = $"Lỗi API: {response.StatusCode}" };
-                }
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    // Trả về lỗi chi tiết để ông dễ debug trên Unity
-                    return new AiResponse { Text = $"Lỗi API ({response.StatusCode}): {responseBody}" };
+                    // In chi tiết "lời mắng" của Google ra console Render để ông dễ soi lỗi
+                    Console.WriteLine($"❌ Gemini API Error Details: {responseBody}");
+                    return new AiResponse { Text = $"Lỗi API {response.StatusCode}: {responseBody}" };
                 }
 
-                // Parse JSON để lấy nội dung phản hồi từ AI
+                // Giải mã JSON kết quả
                 dynamic? result = JsonConvert.DeserializeObject(responseBody);
-                string aiText = result?.candidates?[0]?.content?.parts?[0]?.text ?? "AI không có phản hồi.";
+
+                // Sử dụng toán tử điều kiện null (?) để tránh crash nếu cấu trúc trả về thay đổi
+                string aiText = result?.candidates?[0]?.content?.parts?[0]?.text
+                                ?? "AI đã nhận lệnh nhưng không có nội dung trả về.";
 
                 return new AiResponse { Text = aiText };
             }
             catch (Exception ex)
             {
-                return new AiResponse { Text = $"Lỗi kết nối: {ex.Message}" };
+                // Bắt các lỗi kết nối mạng hoặc SSL
+                Console.WriteLine($"❌ Connection Error: {ex.Message}");
+                return new AiResponse { Text = $"Lỗi kết nối hệ thống: {ex.Message}" };
             }
         }
     }
