@@ -9,6 +9,7 @@ RUN dotnet restore
 # Copy toàn bộ code và publish
 COPY . ./
 RUN dotnet publish -c Release -o out
+RUN apt-get update && apt-get install -y libgssapi-krb5-2
 
 # Bước 2: Run
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
