@@ -30,7 +30,9 @@ namespace VibeCity_API.Controllers
                 string major = student?.Major ?? "Robot & AI";
 
                 // 2. Cấu hình AI
-                var apiKey = "AIzaSyAykbGxfRJoDasMBiSP61bpiiuOyJf01p8";
+                // Lấy key từ biến môi trường của hệ thống (Render/Windows)
+                var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
+                             ?? _configuration["GeminiApiKey"];
 
                 // Khởi tạo model theo đúng cấu trúc Gunpal Jain
                 var client = new GenerativeModel(apiKey, "gemini-1.5-flash");

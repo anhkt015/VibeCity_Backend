@@ -17,7 +17,7 @@ namespace VibeCity_API.Data
         public double RotY { get; set; }
 
         // Gán mặc định là chuỗi rỗng để tránh lỗi Warning Null
-        public string Timestamp { get; set; } = string.Empty;
+        public string? Timestamp { get; set; } = string.Empty;
     }
     public class Student
     {
