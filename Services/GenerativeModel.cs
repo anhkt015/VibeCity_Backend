@@ -47,6 +47,12 @@ namespace Google_GenerativeAI
                 // Gửi request POST
                 var response = await _client.PostAsync(url, content);
                 var responseBody = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    // Dòng này sẽ in chi tiết lỗi từ Google lên console của Render
+                    Console.WriteLine($"❌ Gemini API Error: {responseBody}");
+                    return new AiResponse { Text = $"Lỗi API: {response.StatusCode}" };
+                }
 
                 if (!response.IsSuccessStatusCode)
                 {
