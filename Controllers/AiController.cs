@@ -37,8 +37,8 @@ namespace VibeCity_API.Controllers
                 string major = student?.Major ?? "Robot & AI";
 
                 // 2. Cấu hình AI - Ưu tiên lấy từ Environment (Render) rồi mới đến appsettings
-                var apiKey = Environment.GetEnvironmentVariable("Gemini_ApiKey")
-                             ?? _configuration["Gemini_ApiKey"];
+                var apiKey = Environment.GetEnvironmentVariable("Gemini_API_Key")
+                             ?? _configuration["Gemini_API_Key"];
 
                 if (string.IsNullOrEmpty(apiKey))
                 {
