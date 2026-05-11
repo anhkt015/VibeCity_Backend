@@ -24,6 +24,12 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 builder.Services.AddControllers();
 
 var app = builder.Build();
+app.UseCors(policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+
+app.UseHttpsRedirection();
+app.UseAuthorization();
+app.MapControllers();
+app.Run();
 
 // --- BẬT SWAGGER TRÊN PRODUCTION (RENDER) ---
 // Đưa ra ngoài if (app.Environment.IsDevelopment()) để Render cũng xem được
