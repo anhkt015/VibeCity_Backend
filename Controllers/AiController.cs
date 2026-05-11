@@ -1,9 +1,11 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Google_GenerativeAI; // Namespace của Gunpal Jain
+using Google_GenerativeAI;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using VibeCity_API.Data; // Để nó thấy AppDbContext và Student từ BuildingController
+using Microsoft.Extensions.Configuration; // Phải thêm dòng này để dùng IConfiguration
+using VibeCity_API.Data;
 
 namespace VibeCity_API.Controllers
 {
@@ -12,10 +14,13 @@ namespace VibeCity_API.Controllers
     public class AiController : ControllerBase
     {
         private readonly AppDbContext _context;
+        private readonly IConfiguration _configuration; // 1. Khai báo IConfiguration
 
-        public AiController(AppDbContext context)
+        // 2. Tiêm cả DbContext và Configuration vào Constructor
+        public AiController(AppDbContext context, IConfiguration configuration)
         {
             _context = context;
+            _configuration = configuration;
         }
 
         [HttpPost("consult")]
@@ -23,38 +28,50 @@ namespace VibeCity_API.Controllers
         {
             try
             {
-                // 1. Lấy thông tin Nhật Anh
-                // Cần chỉ định rõ <Student> nếu VS bị rối giữa các bảng
-                var student = await _context.Students.FirstOrDefaultAsync();
+                // 1. Lấy thông tin sinh viên (Sửa lỗi EF cảnh báo bằng OrderBy)
+                var student = await _context.Students
+                                            .OrderBy(s => s.Id)
+                                            .FirstOrDefaultAsync();
+
                 string name = student?.FullName ?? "Nhật Anh";
                 string major = student?.Major ?? "Robot & AI";
 
-                // 2. Cấu hình AI
-                // Lấy key từ biến môi trường của hệ thống (Render/Windows)
-                var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY")
-                             ?? _configuration["GeminiApiKey"];
+                // 2. Cấu hình AI - Ưu tiên lấy từ Environment (Render) rồi mới đến appsettings
+                var apiKey = Environment.GetEnvironmentVariable("Gemini_ApiKey")
+                             ?? _configuration["Gemini_ApiKey"];
 
-                // Khởi tạo model theo đúng cấu trúc Gunpal Jain
+                if (string.IsNullOrEmpty(apiKey))
+                {
+                    return BadRequest(new { error = "Chưa cấu hình API Key trên Render!" });
+                }
+
+                // Khởi tạo model
                 var client = new GenerativeModel(apiKey, "gemini-1.5-flash");
 
-                // 3. Prompt
-                string prompt = $"Chào, tôi là sinh viên {name}, ngành {major}. " +
-                                $"Tôi đang học: {string.Join(", ", subjects)}. " +
-                                "Tư vấn lộ trình học ngắn gọn và 3 câu trắc nghiệm JSON.";
+                // 3. Prompt cá nhân hóa cho Nhật Anh
+                string subjectList = (subjects != null && subjects.Count > 0)
+                                     ? string.Join(", ", subjects)
+                                     : "các môn đại cương";
 
-                // 4. GỌI HÀM (QUAN TRỌNG: Phải có Async ở cuối)
+                string prompt = $"Chào, tôi là sinh viên {name}, đang theo học ngành {major} tại HCMUTE. " +
+                                $"Tôi đang tìm hiểu về: {subjectList}. " +
+                                "Hãy tư vấn lộ trình học tập ngắn gọn và tạo 3 câu hỏi trắc nghiệm kiến thức dưới dạng JSON.";
+
+                // 4. Gọi API Gemini
                 var response = await client.GenerateContentAsync(prompt);
 
                 return Ok(new
                 {
                     studentName = name,
                     major = major,
-                    advice = response?.Text ?? "AI không trả lời"
+                    advice = response?.Text ?? "AI đang bận, thử lại sau nhé!"
                 });
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
-                return BadRequest(new { error = ex.Message });
+                // Log lỗi chi tiết ra console của Render để dễ debug
+                Console.WriteLine($"❌ [AI Error]: {ex.Message}");
+                return StatusCode(500, new { error = ex.Message });
             }
         }
     }
