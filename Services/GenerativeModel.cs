@@ -21,11 +21,28 @@ namespace Google_GenerativeAI
             _model = model;
         }
 
-        public Task<AiResponse> GenerateContentAsync(string prompt)
+        public async Task<AiResponse> GenerateContentAsync(string prompt)
         {
-            var preview = prompt?.Length > 200 ? prompt.Substring(0, 200) + "..." : prompt;
-            var text = $"[Simulated response from {_model}. Prompt preview: {preview}]";
-            return Task.FromResult(new AiResponse { Text = text });
+            using (var client = new System.Net.Http.HttpClient())
+            {
+                // URL gọi API của Gemini
+                string url = $"https://generativelanguage.googleapis.com/v1beta/models/{_model}:generateContent?key={_apiKey}";
+
+                // Cấu trúc dữ liệu gửi đi (JSON)
+                var payload = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(payload);
+                var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+                // Gửi request
+                var response = await client.PostAsync(url, content);
+                var responseBody = await response.Content.ReadAsStringAsync();
+
+                // Trích xuất lấy đoạn text trả về từ Google
+                dynamic result = Newtonsoft.Json.JsonConvert.DeserializeObject(responseBody);
+                string aiText = result.candidates[0].content.parts[0].text;
+
+                return new AiResponse { Text = aiText };
+            }
         }
     }
 }
