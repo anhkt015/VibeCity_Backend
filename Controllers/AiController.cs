@@ -39,6 +39,24 @@ namespace VibeCity_API.Controllers
             public List<QuizQuestion>? quiz { get; set; }
         }
 
+        // --- API KIỂM TRA CẤU HÌNH KEY ---
+        [HttpGet("check-config")]
+        public IActionResult CheckConfig()
+        {
+            var key1 = Environment.GetEnvironmentVariable("Gemini_API_Key");
+            var key2 = Environment.GetEnvironmentVariable("Gemini_API_Key_Backup");
+
+            var report = new
+            {
+                Key1_Status = string.IsNullOrEmpty(key1) ? "TRỐNG (NULL)" : $"Đã nhận: {key1.Substring(0, 5)}***",
+                Key2_Status = string.IsNullOrEmpty(key2) ? "TRỐNG (NULL)" : $"Đã nhận: {key2.Substring(0, 5)}***",
+                Server_Time = DateTime.Now.ToString("HH:mm:ss"),
+                Note = "Nếu báo TRỐNG, hãy kiểm tra lại tên biến trên Render (phải đúng chữ hoa/thường)."
+            };
+
+            return Ok(report);
+        }
+
         [HttpPost("consult")]
         public async Task<IActionResult> GetAiAdvice([FromBody] List<string> subjects)
         {
@@ -80,7 +98,6 @@ namespace VibeCity_API.Controllers
                 // --- CHIẾN THUẬT: 2.5 FLASH SONG KIẾM HỢP BÍCH ---
                 try
                 {
-                    // Thử Key 1 với 2.5 Flash
                     var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
@@ -93,7 +110,6 @@ namespace VibeCity_API.Controllers
                     {
                         try
                         {
-                            // Thử Key 2 cũng với bản 2.5 Flash
                             var backupClient = new GenerativeModel(apiKey2, "gemini-2.5-flash");
                             var backupResponse = await backupClient.GenerateContentAsync(prompt);
                             rawText = backupResponse?.Text ?? "";
@@ -101,7 +117,6 @@ namespace VibeCity_API.Controllers
                         catch (Exception exBackup)
                         {
                             Console.WriteLine($"❌ Cả 2 Key đều lỗi: {exBackup.Message}");
-                            // Để trống rawText để xuống dưới báo hết hạn mức
                         }
                     }
                 }
@@ -120,7 +135,6 @@ namespace VibeCity_API.Controllers
                     }
                 }
 
-                // Nếu chạy xuống đây nghĩa là không có rawText (Cả 2 key đều 429 hoặc lỗi)
                 return StatusCode(429, new
                 {
                     error = "Hết hạn mức rồi Anh ơi!",
@@ -131,23 +145,6 @@ namespace VibeCity_API.Controllers
             {
                 Console.WriteLine($"❌ Lỗi nghiêm trọng: {ex.Message}");
                 return StatusCode(500, new { error = "Hệ thống AI gặp sự cố kỹ thuật!" });
-            }
-            // --- ĐOẠN CODE KIỂM TRA KEY (Dán vào cuối class AiController) ---
-            [HttpGet("check-config")]
-            public IActionResult CheckConfig()
-            {
-                var key1 = Environment.GetEnvironmentVariable("Gemini_API_Key");
-                var key2 = Environment.GetEnvironmentVariable("Gemini_API_Key_Backup");
-
-                var report = new
-                {
-                    Key1_Status = string.IsNullOrEmpty(key1) ? "TRỐNG (NULL)" : $"Đã nhận: {key1.Substring(0, 5)}***",
-                    Key2_Status = string.IsNullOrEmpty(key2) ? "TRỐNG (NULL)" : $"Đã nhận: {key2.Substring(0, 5)}***",
-                    Server_Time = DateTime.Now.ToString("HH:mm:ss"),
-                    Note = "Nếu báo TRỐNG, hãy kiểm tra lại tên biến trên Render (phải đúng chữ hoa/thường)."
-                };
-
-                return Ok(report);
             }
         }
     }
