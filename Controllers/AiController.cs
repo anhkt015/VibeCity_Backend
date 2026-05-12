@@ -46,7 +46,7 @@ namespace VibeCity_API.Controllers
                 }
 
                 // Khởi tạo model
-                var client = new GenerativeModel(apiKey, "gemini-1.5-flash");
+                var client = new GenerativeModel(apiKey, "gemini-2.5-flash");
 
                 // 3. Prompt cá nhân hóa cho Nhật Anh
                 string subjectList = (subjects != null && subjects.Count > 0)
