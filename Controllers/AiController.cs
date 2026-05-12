@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿]using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Google_GenerativeAI;
 using System;
@@ -6,8 +6,9 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using VibeCity_API.Data;
-using Newtonsoft.Json; // Đảm bảo đã cài package Newtonsoft.Json
+using Newtonsoft.Json;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace VibeCity_API.Controllers
 {
@@ -24,7 +25,6 @@ namespace VibeCity_API.Controllers
             _configuration = configuration;
         }
 
-        // --- Định nghĩa cấu trúc dữ liệu để Unity dễ đọc ---
         public class QuizQuestion
         {
             public string question { get; set; }
@@ -44,7 +44,7 @@ namespace VibeCity_API.Controllers
         {
             try
             {
-                // 1. Lấy thông tin sinh viên (giữ nguyên logic của ông Anh)
+                // 1. Lấy thông tin sinh viên
                 var student = await _context.Students
                                             .OrderBy(s => s.Id)
                                             .FirstOrDefaultAsync();
@@ -52,49 +52,69 @@ namespace VibeCity_API.Controllers
                 string name = student?.FullName ?? "Lê Nhật Anh";
                 string major = student?.Major ?? "Robot & AI";
 
-                // 2. Cấu hình API Key
+                // 2. Lấy API Key
                 var apiKey = Environment.GetEnvironmentVariable("Gemini_API_Key")
                              ?? _configuration["Gemini_API_Key"];
 
                 if (string.IsNullOrEmpty(apiKey))
                 {
-                    return BadRequest(new { error = "Chưa cấu hình API Key trên Render!" });
+                    return BadRequest(new { error = "Chưa cấu hình API Key!" });
                 }
 
-                var client = new GenerativeModel(apiKey, "gemini-2.5-flash");
-
-                // 3. Prompt ép AI trả về đúng JSON
+                // 3. Chuẩn bị Prompt
                 string subjectList = (subjects != null && subjects.Count > 0)
                                      ? string.Join(", ", subjects)
                                      : "các môn đại cương";
 
                 string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. " +
-                                $"Hãy tư vấn ngắn gọn  về {subjectList}. " +
-                                "Yêu cầu: Trả về DUY NHẤT một khối JSON (không kèm lời chào) có cấu trúc sau: " +
+                                $"Hãy tư vấn ngắn gọn về {subjectList}. " +
+                                "YÊU CẦU: Trả về DUY NHẤT một khối JSON. " +
+                                "Trong 'closingQuestion' PHẢI dặn: 'Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!'. " +
+                                "Cấu trúc JSON: " +
                                 "{" +
-                                "  \"advice\": \"nội dung tóm tắt tư vấn\", " +
-                                "  \"closingQuestion\": \"Câu hỏi gợi mở bạn có thắc mắc gì không? Nếu không hãy bấm send để làm bài kiểm tra\", " +
+                                "  \"advice\": \"nội dung tư vấn\", " +
+                                "  \"closingQuestion\": \"...\", " +
                                 "  \"quiz\": [ { \"question\": \"...\", \"options\": [\"a\", \"b\", \"c\", \"d\"], \"answer\": 0 } ] " +
                                 "}" +
-                                "Lưu ý: Tạo đúng 5 câu hỏi trắc nghiệm liên quan đến nội dung tư vấn.";
+                                "Lưu ý: Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
 
-                // 4. Gọi API Gemini
-                var response = await client.GenerateContentAsync(prompt);
+                // 4. LOGIC DỰ PHÒNG: 2.5 FLASH -> 2.0 FLASH LITE
+                GenerateContentResponse response = null;
+
+                try
+                {
+                    // Ưu tiên dùng bản 2.5 Flash như cũ
+                    var client = new GenerativeModel(apiKey, "gemini-2.5-flash");
+                    response = await client.GenerateContentAsync(prompt);
+                }
+                catch (Exception ex)
+                {
+                    // Nếu 2.5 lỗi (hết quota 429, hoặc server 503), tự động nhảy sang 2.0 Flash Lite
+                    Console.WriteLine($"⚠️ Gemini 2.5 báo lỗi: {ex.Message}. Đang chuyển sang 2.0 Flash-Lite...");
+                    var fallbackClient = new GenerativeModel(apiKey, "gemini-2.0-flash-lite");
+                    response = await fallbackClient.GenerateContentAsync(prompt);
+                }
+
                 string rawText = response?.Text ?? "";
 
-                // 5. Xử lý chuỗi (Lọc sạch các ký tự ```json nếu AI lỡ tay viết vào)
-                string cleanJson = rawText.Replace("```json", "").Replace("```", "").Trim();
+                // 5. DÙNG REGEX ĐỂ TRÍCH XUẤT JSON (Chống lỗi 'Unexpected character L')
+                var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
 
-                // Giải mã thử để kiểm tra tính hợp lệ của JSON trước khi gửi đi
-                var resultObject = JsonConvert.DeserializeObject<AiResponse>(cleanJson);
-
-                // Trả về trực tiếp Object để ASP.NET Core tự convert sang JSON sạch
-                return Ok(resultObject);
+                if (match.Success)
+                {
+                    string cleanJson = match.Value;
+                    var resultObject = JsonConvert.DeserializeObject<AiResponse>(cleanJson);
+                    return Ok(resultObject);
+                }
+                else
+                {
+                    return StatusCode(500, new { error = "AI trả về dữ liệu không hợp lệ." });
+                }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ [AI Error]: {ex.Message}");
-                return StatusCode(500, new { error = "AI trả về dữ liệu không đúng cấu trúc, hãy thử lại!" });
+                return StatusCode(500, new { error = "Hệ thống đang bận, Nhật Anh vui lòng thử lại sau giây lát!" });
             }
         }
     }
