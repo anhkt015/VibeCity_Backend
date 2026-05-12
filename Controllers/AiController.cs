@@ -25,7 +25,6 @@ namespace VibeCity_API.Controllers
             _configuration = configuration;
         }
 
-        // --- Dùng dấu ? để hết bị báo Warning CS8618 ---
         public class QuizQuestion
         {
             public string? question { get; set; }
@@ -45,6 +44,7 @@ namespace VibeCity_API.Controllers
         {
             try
             {
+                // 1. Lấy thông tin sinh viên
                 var student = await _context.Students
                                             .OrderBy(s => s.Id)
                                             .FirstOrDefaultAsync();
@@ -52,13 +52,12 @@ namespace VibeCity_API.Controllers
                 string name = student?.FullName ?? "Lê Nhật Anh";
                 string major = student?.Major ?? "Robot & AI";
 
-                var apiKey = Environment.GetEnvironmentVariable("Gemini_API_Key")
-                             ?? _configuration["Gemini_API_Key"];
+                // 2. Lấy 2 API Key
+                var apiKey1 = Environment.GetEnvironmentVariable("Gemini_API_Key")
+                              ?? _configuration["Gemini_API_Key"];
 
-                if (string.IsNullOrEmpty(apiKey))
-                {
-                    return BadRequest(new { error = "Chưa cấu hình API Key!" });
-                }
+                var apiKey2 = Environment.GetEnvironmentVariable("Gemini_API_Key_Backup")
+                              ?? _configuration["Gemini_API_Key_Backup"];
 
                 string subjectList = (subjects != null && subjects.Count > 0)
                                      ? string.Join(", ", subjects)
@@ -67,7 +66,7 @@ namespace VibeCity_API.Controllers
                 string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. " +
                                 $"Hãy tư vấn ngắn gọn về {subjectList}. " +
                                 "YÊU CẦU: Trả về DUY NHẤT một khối JSON. " +
-                                "Trong 'closingQuestion' PHẢI dặn: 'Nếu không còn thắc mắc, hãy để trống ô nhập và bấm Gửi để làm Quiz nhé!'. " +
+                                "Trong 'closingQuestion' PHẢI dặn: 'Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!'. " +
                                 "Cấu trúc JSON: " +
                                 "{" +
                                 "  \"advice\": \"nội dung tư vấn\", " +
@@ -76,40 +75,62 @@ namespace VibeCity_API.Controllers
                                 "}" +
                                 "Lưu ý: Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
 
-                // --- Dùng var để tránh lỗi CS0246 (Không tìm thấy kiểu GenerateContentResponse) ---
                 string rawText = "";
 
+                // --- CHIẾN THUẬT: 2.5 FLASH SONG KIẾM HỢP BÍCH ---
                 try
                 {
-                    var client = new GenerativeModel(apiKey, "gemini-2.5-flash");
+                    // Thử Key 1 với 2.5 Flash
+                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    // Fallback sang 2.0 Flash Lite
-                    var fallbackClient = new GenerativeModel(apiKey, "gemini-2.0-flash-lite");
-                    var fallbackResponse = await fallbackClient.GenerateContentAsync(prompt);
-                    rawText = fallbackResponse?.Text ?? "";
+                    Console.WriteLine($"⚠️ Key chính lỗi: {ex.Message}. Đang thử Key dự phòng bằng bản 2.5...");
+
+                    if (!string.IsNullOrEmpty(apiKey2))
+                    {
+                        try
+                        {
+                            // Thử Key 2 cũng với bản 2.5 Flash
+                            var backupClient = new GenerativeModel(apiKey2, "gemini-2.5-flash");
+                            var backupResponse = await backupClient.GenerateContentAsync(prompt);
+                            rawText = backupResponse?.Text ?? "";
+                        }
+                        catch (Exception exBackup)
+                        {
+                            Console.WriteLine($"❌ Cả 2 Key đều lỗi: {exBackup.Message}");
+                            // Để trống rawText để xuống dưới báo hết hạn mức
+                        }
+                    }
                 }
 
+                // 3. Xử lý bóc tách và trả về
                 var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
 
                 if (match.Success)
                 {
                     string cleanJson = match.Value;
                     var resultObject = JsonConvert.DeserializeObject<AiResponse>(cleanJson);
-                    return Ok(resultObject);
+
+                    if (resultObject != null && !string.IsNullOrEmpty(resultObject.advice))
+                    {
+                        return Ok(resultObject);
+                    }
                 }
-                else
+
+                // Nếu chạy xuống đây nghĩa là không có rawText (Cả 2 key đều 429 hoặc lỗi)
+                return StatusCode(429, new
                 {
-                    return StatusCode(500, new { error = "AI trả về dữ liệu không hợp lệ." });
-                }
+                    error = "Hết hạn mức rồi Anh ơi!",
+                    message = "Cả 2 API Key đều đã dùng hết 20 lượt/ngày. Nhật Anh hãy đổi Key mới hoặc đợi đến ngày mai nhé!"
+                });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ [AI Error]: {ex.Message}");
-                return StatusCode(500, new { error = "Hệ thống đang bận, Nhật Anh vui lòng thử lại sau!" });
+                Console.WriteLine($"❌ Lỗi nghiêm trọng: {ex.Message}");
+                return StatusCode(500, new { error = "Hệ thống AI gặp sự cố kỹ thuật!" });
             }
         }
     }
