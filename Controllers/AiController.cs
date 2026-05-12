@@ -4,8 +4,10 @@ using Google_GenerativeAI;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Configuration; // Phải thêm dòng này để dùng IConfiguration
+using Microsoft.Extensions.Configuration;
 using VibeCity_API.Data;
+using Newtonsoft.Json; // Đảm bảo đã cài package Newtonsoft.Json
+using System.Linq;
 
 namespace VibeCity_API.Controllers
 {
@@ -14,13 +16,27 @@ namespace VibeCity_API.Controllers
     public class AiController : ControllerBase
     {
         private readonly AppDbContext _context;
-        private readonly IConfiguration _configuration; // 1. Khai báo IConfiguration
+        private readonly IConfiguration _configuration;
 
-        // 2. Tiêm cả DbContext và Configuration vào Constructor
         public AiController(AppDbContext context, IConfiguration configuration)
         {
             _context = context;
             _configuration = configuration;
+        }
+
+        // --- Định nghĩa cấu trúc dữ liệu để Unity dễ đọc ---
+        public class QuizQuestion
+        {
+            public string question { get; set; }
+            public List<string> options { get; set; }
+            public int answer { get; set; }
+        }
+
+        public class AiResponse
+        {
+            public string advice { get; set; }
+            public string closingQuestion { get; set; }
+            public List<QuizQuestion> quiz { get; set; }
         }
 
         [HttpPost("consult")]
@@ -28,15 +44,15 @@ namespace VibeCity_API.Controllers
         {
             try
             {
-                // 1. Lấy thông tin sinh viên (Sửa lỗi EF cảnh báo bằng OrderBy)
+                // 1. Lấy thông tin sinh viên (giữ nguyên logic của ông Anh)
                 var student = await _context.Students
                                             .OrderBy(s => s.Id)
                                             .FirstOrDefaultAsync();
 
-                string name = student?.FullName ?? "Nhật Anh";
+                string name = student?.FullName ?? "Lê Nhật Anh";
                 string major = student?.Major ?? "Robot & AI";
 
-                // 2. Cấu hình AI - Ưu tiên lấy từ Environment (Render) rồi mới đến appsettings
+                // 2. Cấu hình API Key
                 var apiKey = Environment.GetEnvironmentVariable("Gemini_API_Key")
                              ?? _configuration["Gemini_API_Key"];
 
@@ -45,33 +61,40 @@ namespace VibeCity_API.Controllers
                     return BadRequest(new { error = "Chưa cấu hình API Key trên Render!" });
                 }
 
-                // Khởi tạo model
                 var client = new GenerativeModel(apiKey, "gemini-2.5-flash");
 
-                // 3. Prompt cá nhân hóa cho Nhật Anh
+                // 3. Prompt ép AI trả về đúng JSON
                 string subjectList = (subjects != null && subjects.Count > 0)
                                      ? string.Join(", ", subjects)
                                      : "các môn đại cương";
 
-                string prompt = $"Chào, tôi là sinh viên {name}, đang theo học ngành {major} tại HCMUTE. " +
-                                $"Tôi đang tìm hiểu về: {subjectList}. " +
-                                "Hãy tư vấn lộ trình học tập ngắn gọn và tạo 3 câu hỏi trắc nghiệm kiến thức dưới dạng JSON.";
+                string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. " +
+                                $"Hãy tư vấn ngắn gọn về {subjectList}. " +
+                                "Yêu cầu: Trả về DUY NHẤT một khối JSON (không kèm lời chào) có cấu trúc sau: " +
+                                "{" +
+                                "  \"advice\": \"nội dung tóm tắt tư vấn\", " +
+                                "  \"closingQuestion\": \"Câu hỏi gợi mở bạn có thắc mắc gì không?\", " +
+                                "  \"quiz\": [ { \"question\": \"...\", \"options\": [\"a\", \"b\", \"c\", \"d\"], \"answer\": 0 } ] " +
+                                "}" +
+                                "Lưu ý: Tạo đúng 5 câu hỏi trắc nghiệm liên quan đến nội dung tư vấn.";
 
                 // 4. Gọi API Gemini
                 var response = await client.GenerateContentAsync(prompt);
+                string rawText = response?.Text ?? "";
 
-                return Ok(new
-                {
-                    studentName = name,
-                    major = major,
-                    advice = response?.Text ?? "AI đang bận, thử lại sau nhé!"
-                });
+                // 5. Xử lý chuỗi (Lọc sạch các ký tự ```json nếu AI lỡ tay viết vào)
+                string cleanJson = rawText.Replace("```json", "").Replace("```", "").Trim();
+
+                // Giải mã thử để kiểm tra tính hợp lệ của JSON trước khi gửi đi
+                var resultObject = JsonConvert.DeserializeObject<AiResponse>(cleanJson);
+
+                // Trả về trực tiếp Object để ASP.NET Core tự convert sang JSON sạch
+                return Ok(resultObject);
             }
             catch (Exception ex)
             {
-                // Log lỗi chi tiết ra console của Render để dễ debug
                 Console.WriteLine($"❌ [AI Error]: {ex.Message}");
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "AI trả về dữ liệu không đúng cấu trúc, hãy thử lại!" });
             }
         }
     }
