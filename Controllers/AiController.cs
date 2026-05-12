@@ -69,11 +69,11 @@ namespace VibeCity_API.Controllers
                                      : "các môn đại cương";
 
                 string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. " +
-                                $"Hãy tư vấn ngắn gọn về {subjectList}. " +
+                                $"Hãy tư vấn ngắn gọn  về {subjectList}. " +
                                 "Yêu cầu: Trả về DUY NHẤT một khối JSON (không kèm lời chào) có cấu trúc sau: " +
                                 "{" +
                                 "  \"advice\": \"nội dung tóm tắt tư vấn\", " +
-                                "  \"closingQuestion\": \"Câu hỏi gợi mở bạn có thắc mắc gì không?\", " +
+                                "  \"closingQuestion\": \"Câu hỏi gợi mở bạn có thắc mắc gì không? Nếu không hãy bấm send để làm bài kiểm tra\", " +
                                 "  \"quiz\": [ { \"question\": \"...\", \"options\": [\"a\", \"b\", \"c\", \"d\"], \"answer\": 0 } ] " +
                                 "}" +
                                 "Lưu ý: Tạo đúng 5 câu hỏi trắc nghiệm liên quan đến nội dung tư vấn.";
