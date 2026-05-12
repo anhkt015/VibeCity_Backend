@@ -25,18 +25,19 @@ namespace VibeCity_API.Controllers
             _configuration = configuration;
         }
 
+        // --- Dùng dấu ? để hết bị báo Warning CS8618 ---
         public class QuizQuestion
         {
-            public string question { get; set; }
-            public List<string> options { get; set; }
+            public string? question { get; set; }
+            public List<string>? options { get; set; }
             public int answer { get; set; }
         }
 
         public class AiResponse
         {
-            public string advice { get; set; }
-            public string closingQuestion { get; set; }
-            public List<QuizQuestion> quiz { get; set; }
+            public string? advice { get; set; }
+            public string? closingQuestion { get; set; }
+            public List<QuizQuestion>? quiz { get; set; }
         }
 
         [HttpPost("consult")]
@@ -66,7 +67,7 @@ namespace VibeCity_API.Controllers
                 string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. " +
                                 $"Hãy tư vấn ngắn gọn về {subjectList}. " +
                                 "YÊU CẦU: Trả về DUY NHẤT một khối JSON. " +
-                                "Trong 'closingQuestion' PHẢI dặn: 'Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!'. " +
+                                "Trong 'closingQuestion' PHẢI dặn: 'Nếu không còn thắc mắc, hãy để trống ô nhập và bấm Gửi để làm Quiz nhé!'. " +
                                 "Cấu trúc JSON: " +
                                 "{" +
                                 "  \"advice\": \"nội dung tư vấn\", " +
@@ -75,20 +76,23 @@ namespace VibeCity_API.Controllers
                                 "}" +
                                 "Lưu ý: Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
 
-                GenerateContentResponse response = null;
+                // --- Dùng var để tránh lỗi CS0246 (Không tìm thấy kiểu GenerateContentResponse) ---
+                string rawText = "";
 
                 try
                 {
                     var client = new GenerativeModel(apiKey, "gemini-2.5-flash");
-                    response = await client.GenerateContentAsync(prompt);
+                    var response = await client.GenerateContentAsync(prompt);
+                    rawText = response?.Text ?? "";
                 }
                 catch (Exception)
                 {
+                    // Fallback sang 2.0 Flash Lite
                     var fallbackClient = new GenerativeModel(apiKey, "gemini-2.0-flash-lite");
-                    response = await fallbackClient.GenerateContentAsync(prompt);
+                    var fallbackResponse = await fallbackClient.GenerateContentAsync(prompt);
+                    rawText = fallbackResponse?.Text ?? "";
                 }
 
-                string rawText = response?.Text ?? "";
                 var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
 
                 if (match.Success)
