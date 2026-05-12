@@ -132,6 +132,23 @@ namespace VibeCity_API.Controllers
                 Console.WriteLine($"❌ Lỗi nghiêm trọng: {ex.Message}");
                 return StatusCode(500, new { error = "Hệ thống AI gặp sự cố kỹ thuật!" });
             }
+            // --- ĐOẠN CODE KIỂM TRA KEY (Dán vào cuối class AiController) ---
+            [HttpGet("check-config")]
+            public IActionResult CheckConfig()
+            {
+                var key1 = Environment.GetEnvironmentVariable("Gemini_API_Key");
+                var key2 = Environment.GetEnvironmentVariable("Gemini_API_Key_Backup");
+
+                var report = new
+                {
+                    Key1_Status = string.IsNullOrEmpty(key1) ? "TRỐNG (NULL)" : $"Đã nhận: {key1.Substring(0, 5)}***",
+                    Key2_Status = string.IsNullOrEmpty(key2) ? "TRỐNG (NULL)" : $"Đã nhận: {key2.Substring(0, 5)}***",
+                    Server_Time = DateTime.Now.ToString("HH:mm:ss"),
+                    Note = "Nếu báo TRỐNG, hãy kiểm tra lại tên biến trên Render (phải đúng chữ hoa/thường)."
+                };
+
+                return Ok(report);
+            }
         }
     }
 }
