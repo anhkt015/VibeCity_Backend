@@ -98,7 +98,7 @@ namespace VibeCity_API.Controllers
                 // --- CHIẾN THUẬT: 2.5 FLASH SONG KIẾM HỢP BÍCH ---
                 try
                 {
-                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
+                    var client = new GenerativeModel(apiKey1, "gemini-2.0-flash");
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
                 }
@@ -110,7 +110,7 @@ namespace VibeCity_API.Controllers
                     {
                         try
                         {
-                            var backupClient = new GenerativeModel(apiKey2, "gemini-2.5-flash");
+                            var backupClient = new GenerativeModel(apiKey2, "gemini-2.0-flash");
                             var backupResponse = await backupClient.GenerateContentAsync(prompt);
                             rawText = backupResponse?.Text ?? "";
                         }
