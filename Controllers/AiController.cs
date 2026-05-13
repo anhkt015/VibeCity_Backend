@@ -47,13 +47,13 @@ namespace VibeCity_API.Controllers
         public class QuizSubmission
         {
             public int Score { get; set; }
-            public string? StudentId { get; set; } // Thêm ? để tránh lỗi Non-nullable
+            public string? StudentId { get; set; }
         }
 
         public class ZombieUpdate
         {
             public int ZombieId { get; set; }
-            public string? StudentId { get; set; } // Thêm ? để tránh lỗi Non-nullable
+            public string? StudentId { get; set; }
             public float NewX { get; set; }
             public float NewY { get; set; }
             public float NewZ { get; set; }
@@ -69,7 +69,6 @@ namespace VibeCity_API.Controllers
                 string name = student?.FullName ?? "Lê Nhật Anh";
                 string major = student?.Major ?? "Robot & AI";
 
-                // Fix cảnh báo null bằng cách thêm ?? ""
                 var apiKey1 = Environment.GetEnvironmentVariable("Gemini_API_Key") ?? _configuration["Gemini_API_Key"] ?? "";
                 var apiOpenRouter = Environment.GetEnvironmentVariable("OpenRouter_API_Key") ?? _configuration["OpenRouter_API_Key"];
 
@@ -87,7 +86,8 @@ namespace VibeCity_API.Controllers
                 string rawText = "";
                 try
                 {
-                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
+                    // Đổi về gemini-1.5-flash để ổn định nhất
+                    var client = new GenerativeModel(apiKey1, "gemini-1.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
                 }
@@ -125,8 +125,8 @@ namespace VibeCity_API.Controllers
                     var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == res.StudentId);
                     if (student != null)
                     {
-                        // Fix lỗi CS0019 bằng cách ép kiểu sang float (0.01f) và mặc định 0.0f
-                        student.Gpa = (student.Gpa ?? 0.0f) + 0.01f;//student.Gpa = (student.Gpa ?? 0.0f) + 0.01f;
+                        // Fix lỗi CS0019: Ép kiểu 0.0 sang double để khớp với bảng Student
+                        student.Gpa = (student.Gpa ?? 0.0) + 0.01;
                         await _context.SaveChangesAsync();
                     }
                 }
@@ -136,7 +136,7 @@ namespace VibeCity_API.Controllers
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
 
-        // 3. ENDPOINT: HỒI SINH ZOMBIE (ÉP KIỂU DECIMAL CHUẨN)
+        // 3. ENDPOINT: HỒI SINH ZOMBIE
         [HttpPost("zombie/respawn")]
         public async Task<IActionResult> RespawnZombie([FromBody] ZombieUpdate model)
         {
@@ -145,17 +145,18 @@ namespace VibeCity_API.Controllers
                 var npc = await _context.Npcs.FirstOrDefaultAsync(n => n.Id == model.ZombieId);
                 if (npc != null)
                 {
-                    npc.SpawnX = Convert.ToDecimal(model.NewX); // Sửa thành SpawnX
-                    npc.SpawnY = Convert.ToDecimal(model.NewY); // Sửa thành SpawnY
-                    npc.SpawnZ = Convert.ToDecimal(model.NewZ); // Sửa thành SpawnZ
+                    // Sửa lỗi CS0266: Ép kiểu từ decimal về double (vì model.NewX là float -> Convert ra decimal -> Cần cast về double cho DB)
+                    npc.SpawnX = (double)Convert.ToDecimal(model.NewX);
+                    npc.SpawnY = (double)Convert.ToDecimal(model.NewY);
+                    npc.SpawnZ = (double)Convert.ToDecimal(model.NewZ);
                 }
 
                 var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == model.StudentId);
                 if (student != null)
                 {
-                    // Fix lỗi CS0019 tương tự submit-quiz
-                    student.Gpa = (student.Gpa ?? 0.0f) + 0.05f;
-                    if (student.Gpa > 4.0f) student.Gpa = 4.0f;
+                    // Ép kiểu 0.0 sang double để cộng GPA
+                    student.Gpa = (student.Gpa ?? 0.0) + 0.05;
+                    if (student.Gpa > 4.0) student.Gpa = 4.0;
                 }
 
                 await _context.SaveChangesAsync();
@@ -182,8 +183,9 @@ namespace VibeCity_API.Controllers
                 request.Content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
                 var response = await _httpClient.SendAsync(request);
                 var result = await response.Content.ReadAsStringAsync();
-                dynamic json = JsonConvert.DeserializeObject(result);
-                return json.choices[0].message.content;
+                var settings = new JsonSerializerSettings { MissingMemberHandling = MissingMemberHandling.Ignore };
+                dynamic? json = JsonConvert.DeserializeObject(result, settings);
+                return json?.choices[0].message.content ?? "";
             }
             catch { return ""; }
         }
