@@ -87,7 +87,7 @@ namespace VibeCity_API.Controllers
                 string rawText = "";
                 try
                 {
-                    var client = new GenerativeModel(apiKey1, "gemini-1.5-flash");
+                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
                 }
@@ -126,7 +126,7 @@ namespace VibeCity_API.Controllers
                     if (student != null)
                     {
                         // Fix lỗi CS0019 bằng cách ép kiểu sang float (0.01f) và mặc định 0.0f
-                        student.Gpa = (student.Gpa ?? 0.0f) + 0.01f;
+                        student.Gpa = (student.Gpa ?? 0.0f) + 0.01f;//student.Gpa = (student.Gpa ?? 0.0f) + 0.01f;
                         await _context.SaveChangesAsync();
                     }
                 }
