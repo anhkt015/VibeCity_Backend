@@ -29,19 +29,7 @@ namespace VibeCity_API.Controllers
             _configuration = configuration;
         }
 
-        public class QuizQuestion
-        {
-            public string? question { get; set; }
-            public List<string>? options { get; set; }
-            public int answer { get; set; }
-        }
-        public class AiResponse
-        {
-            public string? advice { get; set; }
-            public string? closingQuestion { get; set; }
-            public List<QuizQuestion>? quiz { get; set; }
-        }
-
+        // 1. ENDPOINT: TƯ VẤN VÀ TẠO QUIZ
         [HttpPost("consult")]
         public async Task<IActionResult> GetAiAdvice([FromBody] List<string> subjects)
         {
@@ -56,52 +44,100 @@ namespace VibeCity_API.Controllers
 
                 string subjectList = (subjects != null && subjects.Count > 0) ? string.Join(", ", subjects) : "các môn chuyên ngành";
 
-                // --- PROMPT SIÊU CHẶT CHẼ ---
                 string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. Hãy tư vấn ngắn gọn về {subjectList}. " +
                                 "Yêu cầu trả về JSON THUẦN (không kèm text khác) với cấu trúc: " +
                                 "{ " +
-                                "\"advice\": \"Lời khuyên của bạn...\", " +
+                                "\"advice\": \"Lời khuyên chuyên sâu...\", " +
                                 "\"closingQuestion\": \"Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!\", " +
                                 "\"quiz\": [ { \"question\": \"...\", \"options\": [\"A\", \"B\", \"C\", \"D\"], \"answer\": 0 } ] " +
                                 "} " +
-                                "Tạo đúng 5 câu hỏi trắc nghiệm.";
+                                "Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
 
                 string rawText = "";
-
-                // 1. Thử Gemini
                 try
                 {
-                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
+                    var client = new GenerativeModel(apiKey1, "gemini-1.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
                 }
                 catch { rawText = ""; }
 
-                // 2. Dự phòng OpenRouter
-                if (string.IsNullOrEmpty(rawText) || !rawText.Contains("{") || rawText.Contains("quota"))
+                if (string.IsNullOrEmpty(rawText) || !rawText.Contains("{"))
                 {
-                    if (!string.IsNullOrEmpty(apiOpenRouter))
-                    {
-                        rawText = await CallOpenRouter(apiOpenRouter, prompt);
-                    }
+                    if (!string.IsNullOrEmpty(apiOpenRouter)) rawText = await CallOpenRouter(apiOpenRouter, prompt);
                 }
 
-                // Parse & Trả về
                 var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
                 if (match.Success)
                 {
                     var resultObject = JsonConvert.DeserializeObject<AiResponse>(match.Value);
                     if (resultObject != null) return Ok(resultObject);
                 }
-
-                return StatusCode(500, new { error = "Hệ thống AI đang bảo trì, vui lòng thử lại sau!" });
+                return StatusCode(500, new { error = "AI tạm thời không phản hồi." });
             }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = ex.Message });
-            }
+            catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
 
+        // 2. ENDPOINT: NỘP BÀI QUIZ (CẬP NHẬT GPA & TRẠNG THÁI TRƯỜNG)
+        [HttpPost("submit-quiz")]
+        public async Task<IActionResult> SubmitQuiz([FromBody] QuizSubmission res)
+        {
+            try
+            {
+                bool isFail = res.Score <= 2;
+                string message = isFail
+                    ? "Kiến thức của bạn quá yếu! Lũ Zombie đã đánh sập cổng trường HCMUTE rồi! CHẠY NGAY ĐI!"
+                    : "Tuyệt vời! Kiến thức vững vàng đã giúp bảo vệ vòng vây an toàn của trường.";
+
+                if (!isFail)
+                {
+                    var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == res.StudentId);
+                    if (student != null)
+                    {
+                        student.Gpa = (student.Gpa ?? 0) + 0.01f;
+                        await _context.SaveChangesAsync();
+                    }
+                }
+
+                return Ok(new { success = true, breakSafeZone = isFail, advice = message, finalScore = res.Score });
+            }
+            catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
+        }
+
+        // 3. ENDPOINT: HỒI SINH ZOMBIE (CẬP NHẬT TỌA ĐỘ & GPA CHIẾN ĐẤU)
+        [HttpPost("zombie/respawn")]
+        public async Task<IActionResult> RespawnZombie([FromBody] ZombieUpdate model)
+        {
+            try
+            {
+                // Cập nhật vị trí mới cho NPC (Zombie) vào bảng Npcs
+                var npc = await _context.Npcs.FirstOrDefaultAsync(n => n.Id == model.ZombieId);
+                if (npc != null)
+                {
+                    npc.PositionX = (decimal)model.NewX; // Ép kiểu nếu DB là decimal
+                    npc.PositionY = (decimal)model.NewY;
+                    npc.PositionZ = (decimal)model.NewZ;
+                }
+
+                // Tăng GPA cho sinh viên khi diệt zombie
+                var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == model.StudentId);
+                if (student != null)
+                {
+                    student.Gpa += 0.05f;
+                    if (student.Gpa > 4.0f) student.Gpa = 4.0f;
+                }
+
+                await _context.SaveChangesAsync();
+                return Ok(new
+                {
+                    newGpa = student?.Gpa,
+                    message = "GPA đã tăng! Zombie đã hồi sinh tại vị trí mới."
+                });
+            }
+            catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
+        }
+
+        // --- HÀM HỖ TRỢ AI ---
         private async Task<string> CallOpenRouter(string apiKey, string prompt)
         {
             try
@@ -120,6 +156,36 @@ namespace VibeCity_API.Controllers
                 return json.choices[0].message.content;
             }
             catch { return ""; }
+        }
+
+        // --- CÁC CLASS DỮ LIỆU (DTOs) ---
+        public class QuizQuestion
+        {
+            public string? question { get; set; }
+            public List<string>? options { get; set; }
+            public int answer { get; set; }
+        }
+
+        public class AiResponse
+        {
+            public string? advice { get; set; }
+            public string? closingQuestion { get; set; }
+            public List<QuizQuestion>? quiz { get; set; }
+        }
+
+        public class QuizSubmission
+        {
+            public int Score { get; set; }
+            public string StudentId { get; set; }
+        }
+
+        public class ZombieUpdate
+        {
+            public int ZombieId { get; set; }
+            public string StudentId { get; set; }
+            public float NewX { get; set; }
+            public float NewY { get; set; }
+            public float NewZ { get; set; }
         }
     }
 }
