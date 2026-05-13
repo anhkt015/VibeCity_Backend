@@ -29,6 +29,36 @@ namespace VibeCity_API.Controllers
             _configuration = configuration;
         }
 
+        // --- CÁC CLASS DỮ LIỆU (DTOs) ---
+        public class QuizQuestion
+        {
+            public string? question { get; set; }
+            public List<string>? options { get; set; }
+            public int answer { get; set; }
+        }
+
+        public class AiResponse
+        {
+            public string? advice { get; set; }
+            public string? closingQuestion { get; set; }
+            public List<QuizQuestion>? quiz { get; set; }
+        }
+
+        public class QuizSubmission
+        {
+            public int Score { get; set; }
+            public string StudentId { get; set; }
+        }
+
+        public class ZombieUpdate
+        {
+            public int ZombieId { get; set; }
+            public string StudentId { get; set; }
+            public float NewX { get; set; }
+            public float NewY { get; set; }
+            public float NewZ { get; set; }
+        }
+
         // 1. ENDPOINT: TƯ VẤN VÀ TẠO QUIZ
         [HttpPost("consult")]
         public async Task<IActionResult> GetAiAdvice([FromBody] List<string> subjects)
@@ -78,7 +108,7 @@ namespace VibeCity_API.Controllers
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
 
-        // 2. ENDPOINT: NỘP BÀI QUIZ (CẬP NHẬT GPA & TRẠNG THÁI TRƯỜNG)
+        // 2. ENDPOINT: NỘP BÀI QUIZ
         [HttpPost("submit-quiz")]
         public async Task<IActionResult> SubmitQuiz([FromBody] QuizSubmission res)
         {
@@ -104,26 +134,25 @@ namespace VibeCity_API.Controllers
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
 
-        // 3. ENDPOINT: HỒI SINH ZOMBIE (CẬP NHẬT TỌA ĐỘ & GPA CHIẾN ĐẤU)
+        // 3. ENDPOINT: HỒI SINH ZOMBIE (ÉP KIỂU DECIMAL CHUẨN)
         [HttpPost("zombie/respawn")]
         public async Task<IActionResult> RespawnZombie([FromBody] ZombieUpdate model)
         {
             try
             {
-                // Cập nhật vị trí mới cho NPC (Zombie) vào bảng Npcs
                 var npc = await _context.Npcs.FirstOrDefaultAsync(n => n.Id == model.ZombieId);
                 if (npc != null)
                 {
-                    npc.PositionX = (decimal)model.NewX; // Ép kiểu nếu DB là decimal
-                    npc.PositionY = (decimal)model.NewY;
-                    npc.PositionZ = (decimal)model.NewZ;
+                    // Ép kiểu float sang decimal để tương thích với kiểu dữ liệu SQL Server (nếu có)
+                    npc.PositionX = Convert.ToDecimal(model.NewX);
+                    npc.PositionY = Convert.ToDecimal(model.NewY);
+                    npc.PositionZ = Convert.ToDecimal(model.NewZ);
                 }
 
-                // Tăng GPA cho sinh viên khi diệt zombie
                 var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == model.StudentId);
                 if (student != null)
                 {
-                    student.Gpa += 0.05f;
+                    student.Gpa = (student.Gpa ?? 0) + 0.05f;
                     if (student.Gpa > 4.0f) student.Gpa = 4.0f;
                 }
 
@@ -156,36 +185,6 @@ namespace VibeCity_API.Controllers
                 return json.choices[0].message.content;
             }
             catch { return ""; }
-        }
-
-        // --- CÁC CLASS DỮ LIỆU (DTOs) ---
-        public class QuizQuestion
-        {
-            public string? question { get; set; }
-            public List<string>? options { get; set; }
-            public int answer { get; set; }
-        }
-
-        public class AiResponse
-        {
-            public string? advice { get; set; }
-            public string? closingQuestion { get; set; }
-            public List<QuizQuestion>? quiz { get; set; }
-        }
-
-        public class QuizSubmission
-        {
-            public int Score { get; set; }
-            public string StudentId { get; set; }
-        }
-
-        public class ZombieUpdate
-        {
-            public int ZombieId { get; set; }
-            public string StudentId { get; set; }
-            public float NewX { get; set; }
-            public float NewY { get; set; }
-            public float NewZ { get; set; }
         }
     }
 }
