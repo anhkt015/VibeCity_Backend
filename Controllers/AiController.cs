@@ -29,23 +29,17 @@ namespace VibeCity_API.Controllers
             _configuration = configuration;
         }
 
-        public class QuizQuestion { public string? question { get; set; } public List<string>? options { get; set; } public int answer { get; set; } }
-        public class AiResponse { public string? advice { get; set; } public string? closingQuestion { get; set; } public List<QuizQuestion>? quiz { get; set; } }
-
-        [HttpGet("check-config")]
-        public IActionResult CheckConfig()
+        public class QuizQuestion
         {
-            var key1 = Environment.GetEnvironmentVariable("Gemini_API_Key");
-            var key2 = Environment.GetEnvironmentVariable("Gemini_API_Key_Backup");
-            var key3 = Environment.GetEnvironmentVariable("OpenRouter_API_Key");
-
-            return Ok(new
-            {
-                Key1_Gemini = string.IsNullOrEmpty(key1) ? "TRỐNG" : "Đã nhận",
-                Key2_Gemini_Backup = string.IsNullOrEmpty(key2) ? "TRỐNG" : "Đã nhận",
-                Key3_OpenRouter = string.IsNullOrEmpty(key3) ? "TRỐNG" : "Đã nhận",
-                Server_Time = DateTime.Now.ToString("HH:mm:ss")
-            });
+            public string? question { get; set; }
+            public List<string>? options { get; set; }
+            public int answer { get; set; }
+        }
+        public class AiResponse
+        {
+            public string? advice { get; set; }
+            public string? closingQuestion { get; set; }
+            public List<QuizQuestion>? quiz { get; set; }
         }
 
         [HttpPost("consult")]
@@ -58,40 +52,41 @@ namespace VibeCity_API.Controllers
                 string major = student?.Major ?? "Robot & AI";
 
                 var apiKey1 = Environment.GetEnvironmentVariable("Gemini_API_Key") ?? _configuration["Gemini_API_Key"];
-                var apiKey2 = Environment.GetEnvironmentVariable("Gemini_API_Key_Backup") ?? _configuration["Gemini_API_Key_Backup"];
                 var apiOpenRouter = Environment.GetEnvironmentVariable("OpenRouter_API_Key") ?? _configuration["OpenRouter_API_Key"];
 
                 string subjectList = (subjects != null && subjects.Count > 0) ? string.Join(", ", subjects) : "các môn chuyên ngành";
-                string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. Hãy tư vấn ngắn gọn về {subjectList}. Trả về JSON: {{ \"advice\": \"...\", \"closingQuestion\": \"Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!\", \"quiz\": [ {{ \"question\": \"...\", \"options\": [\"a\", \"b\", \"c\", \"d\"], \"answer\": 0 }} ] }} Tạo đúng 5 câu hỏi.";
+
+                // --- PROMPT SIÊU CHẶT CHẼ ---
+                string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. Hãy tư vấn ngắn gọn về {subjectList}. " +
+                                "Yêu cầu trả về JSON THUẦN (không kèm text khác) với cấu trúc: " +
+                                "{ " +
+                                "\"advice\": \"Lời khuyên của bạn...\", " +
+                                "\"closingQuestion\": \"Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!\", " +
+                                "\"quiz\": [ { \"question\": \"...\", \"options\": [\"A\", \"B\", \"C\", \"D\"], \"answer\": 0 } ] " +
+                                "} " +
+                                "Tạo đúng 5 câu hỏi trắc nghiệm.";
 
                 string rawText = "";
 
-                // --- BƯỚC 1: THỬ GEMINI KEY 1 ---
+                // 1. Thử Gemini
                 try
                 {
-                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash"); // Hạ xuống 1.5 cho ổn định
+                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
                 }
-                catch
+                catch { rawText = ""; }
+
+                // 2. Dự phòng OpenRouter
+                if (string.IsNullOrEmpty(rawText) || !rawText.Contains("{") || rawText.Contains("quota"))
                 {
-                    // --- BƯỚC 2: THỬ GEMINI KEY 2 ---
-                    try
+                    if (!string.IsNullOrEmpty(apiOpenRouter))
                     {
-                        var backupClient = new GenerativeModel(apiKey2, "gemini-2.0-flash");
-                        var backupResponse = await backupClient.GenerateContentAsync(prompt);
-                        rawText = backupResponse?.Text ?? "";
-                    }
-                    catch
-                    {
-                        // --- BƯỚC 3: "CỨU GIÁ" BẰNG OPENROUTER (LLAMA 3) ---
-                        if (!string.IsNullOrEmpty(apiOpenRouter))
-                        {
-                            rawText = await CallOpenRouter(apiOpenRouter, prompt);
-                        }
+                        rawText = await CallOpenRouter(apiOpenRouter, prompt);
                     }
                 }
 
+                // Parse & Trả về
                 var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
                 if (match.Success)
                 {
@@ -99,11 +94,11 @@ namespace VibeCity_API.Controllers
                     if (resultObject != null) return Ok(resultObject);
                 }
 
-                return StatusCode(429, new { error = "Hệ thống AI đang bảo trì, vui lòng thử lại sau!" });
+                return StatusCode(500, new { error = "Hệ thống AI đang bảo trì, vui lòng thử lại sau!" });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = "Lỗi: " + ex.Message });
+                return StatusCode(500, new { error = ex.Message });
             }
         }
 
@@ -113,17 +108,14 @@ namespace VibeCity_API.Controllers
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
                 var body = new
                 {
                     model = "meta-llama/llama-3-8b-instruct:free",
                     messages = new[] { new { role = "user", content = prompt } }
                 };
-
                 request.Content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
                 var response = await _httpClient.SendAsync(request);
                 var result = await response.Content.ReadAsStringAsync();
-
                 dynamic json = JsonConvert.DeserializeObject(result);
                 return json.choices[0].message.content;
             }
