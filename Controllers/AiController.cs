@@ -9,6 +9,9 @@ using VibeCity_API.Data;
 using Newtonsoft.Json;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Net.Http;
+using System.Text;
+using System.Net.Http.Headers;
 
 namespace VibeCity_API.Controllers
 {
@@ -18,6 +21,7 @@ namespace VibeCity_API.Controllers
     {
         private readonly AppDbContext _context;
         private readonly IConfiguration _configuration;
+        private static readonly HttpClient _httpClient = new HttpClient();
 
         public AiController(AppDbContext context, IConfiguration configuration)
         {
@@ -25,36 +29,23 @@ namespace VibeCity_API.Controllers
             _configuration = configuration;
         }
 
-        public class QuizQuestion
-        {
-            public string? question { get; set; }
-            public List<string>? options { get; set; }
-            public int answer { get; set; }
-        }
+        public class QuizQuestion { public string? question { get; set; } public List<string>? options { get; set; } public int answer { get; set; } }
+        public class AiResponse { public string? advice { get; set; } public string? closingQuestion { get; set; } public List<QuizQuestion>? quiz { get; set; } }
 
-        public class AiResponse
-        {
-            public string? advice { get; set; }
-            public string? closingQuestion { get; set; }
-            public List<QuizQuestion>? quiz { get; set; }
-        }
-
-        // --- API KIỂM TRA CẤU HÌNH KEY ---
         [HttpGet("check-config")]
         public IActionResult CheckConfig()
         {
             var key1 = Environment.GetEnvironmentVariable("Gemini_API_Key");
             var key2 = Environment.GetEnvironmentVariable("Gemini_API_Key_Backup");
+            var key3 = Environment.GetEnvironmentVariable("OpenRouter_API_Key");
 
-            var report = new
+            return Ok(new
             {
-                Key1_Status = string.IsNullOrEmpty(key1) ? "TRỐNG (NULL)" : $"Đã nhận: {key1.Substring(0, 5)}***",
-                Key2_Status = string.IsNullOrEmpty(key2) ? "TRỐNG (NULL)" : $"Đã nhận: {key2.Substring(0, 5)}***",
-                Server_Time = DateTime.Now.ToString("HH:mm:ss"),
-                Note = "Nếu báo TRỐNG, hãy kiểm tra lại tên biến trên Render (phải đúng chữ hoa/thường)."
-            };
-
-            return Ok(report);
+                Key1_Gemini = string.IsNullOrEmpty(key1) ? "TRỐNG" : "Đã nhận",
+                Key2_Gemini_Backup = string.IsNullOrEmpty(key2) ? "TRỐNG" : "Đã nhận",
+                Key3_OpenRouter = string.IsNullOrEmpty(key3) ? "TRỐNG" : "Đã nhận",
+                Server_Time = DateTime.Now.ToString("HH:mm:ss")
+            });
         }
 
         [HttpPost("consult")]
@@ -62,90 +53,81 @@ namespace VibeCity_API.Controllers
         {
             try
             {
-                // 1. Lấy thông tin sinh viên
-                var student = await _context.Students
-                                            .OrderBy(s => s.Id)
-                                            .FirstOrDefaultAsync();
-
+                var student = await _context.Students.OrderBy(s => s.Id).FirstOrDefaultAsync();
                 string name = student?.FullName ?? "Lê Nhật Anh";
                 string major = student?.Major ?? "Robot & AI";
 
-                // 2. Lấy 2 API Key
-                var apiKey1 = Environment.GetEnvironmentVariable("Gemini_API_Key")
-                              ?? _configuration["Gemini_API_Key"];
+                var apiKey1 = Environment.GetEnvironmentVariable("Gemini_API_Key") ?? _configuration["Gemini_API_Key"];
+                var apiKey2 = Environment.GetEnvironmentVariable("Gemini_API_Key_Backup") ?? _configuration["Gemini_API_Key_Backup"];
+                var apiOpenRouter = Environment.GetEnvironmentVariable("OpenRouter_API_Key") ?? _configuration["OpenRouter_API_Key"];
 
-                var apiKey2 = Environment.GetEnvironmentVariable("Gemini_API_Key_Backup")
-                              ?? _configuration["Gemini_API_Key_Backup"];
-
-                string subjectList = (subjects != null && subjects.Count > 0)
-                                     ? string.Join(", ", subjects)
-                                     : "các môn đại cương";
-
-                string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. " +
-                                $"Hãy tư vấn ngắn gọn về {subjectList}. " +
-                                "YÊU CẦU: Trả về DUY NHẤT một khối JSON. " +
-                                "Trong 'closingQuestion' PHẢI dặn: 'Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!'. " +
-                                "Cấu trúc JSON: " +
-                                "{" +
-                                "  \"advice\": \"nội dung tư vấn\", " +
-                                "  \"closingQuestion\": \"...\", " +
-                                "  \"quiz\": [ { \"question\": \"...\", \"options\": [\"a\", \"b\", \"c\", \"d\"], \"answer\": 0 } ] " +
-                                "}" +
-                                "Lưu ý: Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
+                string subjectList = (subjects != null && subjects.Count > 0) ? string.Join(", ", subjects) : "các môn chuyên ngành";
+                string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. Hãy tư vấn ngắn gọn về {subjectList}. Trả về JSON: {{ \"advice\": \"...\", \"closingQuestion\": \"Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!\", \"quiz\": [ {{ \"question\": \"...\", \"options\": [\"a\", \"b\", \"c\", \"d\"], \"answer\": 0 }} ] }} Tạo đúng 5 câu hỏi.";
 
                 string rawText = "";
 
-                // --- CHIẾN THUẬT: 2.5 FLASH SONG KIẾM HỢP BÍCH ---
+                // --- BƯỚC 1: THỬ GEMINI KEY 1 ---
                 try
                 {
-                    var client = new GenerativeModel(apiKey1, "gemini-2.0-flash");
+                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash"); // Hạ xuống 1.5 cho ổn định
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
                 }
-                catch (Exception ex)
+                catch
                 {
-                    Console.WriteLine($"⚠️ Key chính lỗi: {ex.Message}. Đang thử Key dự phòng bằng bản 2.5...");
-
-                    if (!string.IsNullOrEmpty(apiKey2))
+                    // --- BƯỚC 2: THỬ GEMINI KEY 2 ---
+                    try
                     {
-                        try
+                        var backupClient = new GenerativeModel(apiKey2, "gemini-2.0-flash");
+                        var backupResponse = await backupClient.GenerateContentAsync(prompt);
+                        rawText = backupResponse?.Text ?? "";
+                    }
+                    catch
+                    {
+                        // --- BƯỚC 3: "CỨU GIÁ" BẰNG OPENROUTER (LLAMA 3) ---
+                        if (!string.IsNullOrEmpty(apiOpenRouter))
                         {
-                            var backupClient = new GenerativeModel(apiKey2, "gemini-2.0-flash");
-                            var backupResponse = await backupClient.GenerateContentAsync(prompt);
-                            rawText = backupResponse?.Text ?? "";
-                        }
-                        catch (Exception exBackup)
-                        {
-                            Console.WriteLine($"❌ Cả 2 Key đều lỗi: {exBackup.Message}");
+                            rawText = await CallOpenRouter(apiOpenRouter, prompt);
                         }
                     }
                 }
 
-                // 3. Xử lý bóc tách và trả về
                 var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
-
                 if (match.Success)
                 {
-                    string cleanJson = match.Value;
-                    var resultObject = JsonConvert.DeserializeObject<AiResponse>(cleanJson);
-
-                    if (resultObject != null && !string.IsNullOrEmpty(resultObject.advice))
-                    {
-                        return Ok(resultObject);
-                    }
+                    var resultObject = JsonConvert.DeserializeObject<AiResponse>(match.Value);
+                    if (resultObject != null) return Ok(resultObject);
                 }
 
-                return StatusCode(429, new
-                {
-                    error = "Hết hạn mức rồi Anh ơi!",
-                    message = "Cả 2 API Key đều đã dùng hết 20 lượt/ngày. Nhật Anh hãy đổi Key mới hoặc đợi đến ngày mai nhé!"
-                });
+                return StatusCode(429, new { error = "Hệ thống AI đang bảo trì, vui lòng thử lại sau!" });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Lỗi nghiêm trọng: {ex.Message}");
-                return StatusCode(500, new { error = "Hệ thống AI gặp sự cố kỹ thuật!" });
+                return StatusCode(500, new { error = "Lỗi: " + ex.Message });
             }
+        }
+
+        private async Task<string> CallOpenRouter(string apiKey, string prompt)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+                var body = new
+                {
+                    model = "meta-llama/llama-3-8b-instruct:free",
+                    messages = new[] { new { role = "user", content = prompt } }
+                };
+
+                request.Content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
+                var response = await _httpClient.SendAsync(request);
+                var result = await response.Content.ReadAsStringAsync();
+
+                dynamic json = JsonConvert.DeserializeObject(result);
+                return json.choices[0].message.content;
+            }
+            catch { return ""; }
         }
     }
 }
