@@ -47,13 +47,13 @@ namespace VibeCity_API.Controllers
         public class QuizSubmission
         {
             public int Score { get; set; }
-            public string StudentId { get; set; }
+            public string? StudentId { get; set; } // Thêm ? để tránh lỗi Non-nullable
         }
 
         public class ZombieUpdate
         {
             public int ZombieId { get; set; }
-            public string StudentId { get; set; }
+            public string? StudentId { get; set; } // Thêm ? để tránh lỗi Non-nullable
             public float NewX { get; set; }
             public float NewY { get; set; }
             public float NewZ { get; set; }
@@ -69,7 +69,8 @@ namespace VibeCity_API.Controllers
                 string name = student?.FullName ?? "Lê Nhật Anh";
                 string major = student?.Major ?? "Robot & AI";
 
-                var apiKey1 = Environment.GetEnvironmentVariable("Gemini_API_Key") ?? _configuration["Gemini_API_Key"];
+                // Fix cảnh báo null bằng cách thêm ?? ""
+                var apiKey1 = Environment.GetEnvironmentVariable("Gemini_API_Key") ?? _configuration["Gemini_API_Key"] ?? "";
                 var apiOpenRouter = Environment.GetEnvironmentVariable("OpenRouter_API_Key") ?? _configuration["OpenRouter_API_Key"];
 
                 string subjectList = (subjects != null && subjects.Count > 0) ? string.Join(", ", subjects) : "các môn chuyên ngành";
@@ -124,7 +125,8 @@ namespace VibeCity_API.Controllers
                     var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == res.StudentId);
                     if (student != null)
                     {
-                        student.Gpa = (student.Gpa ?? 0) + 0.01f;
+                        // Fix lỗi CS0019 bằng cách ép kiểu sang float (0.01f) và mặc định 0.0f
+                        student.Gpa = (student.Gpa ?? 0.0f) + 0.01f;
                         await _context.SaveChangesAsync();
                     }
                 }
@@ -143,7 +145,7 @@ namespace VibeCity_API.Controllers
                 var npc = await _context.Npcs.FirstOrDefaultAsync(n => n.Id == model.ZombieId);
                 if (npc != null)
                 {
-                    // Ép kiểu float sang decimal để tương thích với kiểu dữ liệu SQL Server (nếu có)
+                    // Giữ nguyên Convert.ToDecimal của ông
                     npc.PositionX = Convert.ToDecimal(model.NewX);
                     npc.PositionY = Convert.ToDecimal(model.NewY);
                     npc.PositionZ = Convert.ToDecimal(model.NewZ);
@@ -152,7 +154,8 @@ namespace VibeCity_API.Controllers
                 var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == model.StudentId);
                 if (student != null)
                 {
-                    student.Gpa = (student.Gpa ?? 0) + 0.05f;
+                    // Fix lỗi CS0019 tương tự submit-quiz
+                    student.Gpa = (student.Gpa ?? 0.0f) + 0.05f;
                     if (student.Gpa > 4.0f) student.Gpa = 4.0f;
                 }
 
@@ -166,7 +169,6 @@ namespace VibeCity_API.Controllers
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
 
-        // --- HÀM HỖ TRỢ AI ---
         private async Task<string> CallOpenRouter(string apiKey, string prompt)
         {
             try
