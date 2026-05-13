@@ -116,22 +116,17 @@ namespace VibeCity_API.Controllers
             try
             {
                 bool isFail = res.Score <= 2;
-                string message = isFail
-                    ? "Kiến thức của bạn quá yếu! Lũ Zombie đã đánh sập cổng trường HCMUTE rồi! CHẠY NGAY ĐI!"
-                    : "Tuyệt vời! Kiến thức vững vàng đã giúp bảo vệ vòng vây an toàn của trường.";
-
                 if (!isFail)
                 {
                     var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == res.StudentId);
                     if (student != null)
                     {
-                        // Fix lỗi CS0019: Ép kiểu 0.0 sang double để khớp với bảng Student
-                        student.Gpa = (student.Gpa ?? 0.0) + 0.01;
+                        // FIX LỖI CS0019: Cộng trực tiếp vì double không bao giờ null (mặc định 0.0)
+                        student.Gpa += 0.01;
                         await _context.SaveChangesAsync();
                     }
                 }
-
-                return Ok(new { success = true, breakSafeZone = isFail, advice = message, finalScore = res.Score });
+                return Ok(new { success = true, breakSafeZone = isFail, finalScore = res.Score });
             }
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
@@ -145,26 +140,22 @@ namespace VibeCity_API.Controllers
                 var npc = await _context.Npcs.FirstOrDefaultAsync(n => n.Id == model.ZombieId);
                 if (npc != null)
                 {
-                    // Sửa lỗi CS0266: Ép kiểu từ decimal về double (vì model.NewX là float -> Convert ra decimal -> Cần cast về double cho DB)
-                    npc.SpawnX = (double)Convert.ToDecimal(model.NewX);
-                    npc.SpawnY = (double)Convert.ToDecimal(model.NewY);
-                    npc.SpawnZ = (double)Convert.ToDecimal(model.NewZ);
+                    // Ép kiểu chuẩn từ float về double cho Supabase
+                    npc.SpawnX = (double)model.NewX;
+                    npc.SpawnY = (double)model.NewY;
+                    npc.SpawnZ = (double)model.NewZ;
                 }
 
                 var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == model.StudentId);
                 if (student != null)
                 {
-                    // Ép kiểu 0.0 sang double để cộng GPA
-                    student.Gpa = (student.Gpa ?? 0.0) + 0.05;
+                    // FIX LỖI CS0019: Cộng trực tiếp
+                    student.Gpa += 0.05;
                     if (student.Gpa > 4.0) student.Gpa = 4.0;
                 }
 
                 await _context.SaveChangesAsync();
-                return Ok(new
-                {
-                    newGpa = student?.Gpa,
-                    message = "GPA đã tăng! Zombie đã hồi sinh tại vị trí mới."
-                });
+                return Ok(new { message = "Zombie respawned and GPA increased!" });
             }
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
