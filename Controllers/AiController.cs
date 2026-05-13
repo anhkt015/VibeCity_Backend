@@ -145,10 +145,9 @@ namespace VibeCity_API.Controllers
                 var npc = await _context.Npcs.FirstOrDefaultAsync(n => n.Id == model.ZombieId);
                 if (npc != null)
                 {
-                    // Giữ nguyên Convert.ToDecimal của ông
-                    npc.PositionX = Convert.ToDecimal(model.NewX);
-                    npc.PositionY = Convert.ToDecimal(model.NewY);
-                    npc.PositionZ = Convert.ToDecimal(model.NewZ);
+                    npc.SpawnX = Convert.ToDecimal(model.NewX); // Sửa thành SpawnX
+                    npc.SpawnY = Convert.ToDecimal(model.NewY); // Sửa thành SpawnY
+                    npc.SpawnZ = Convert.ToDecimal(model.NewZ); // Sửa thành SpawnZ
                 }
 
                 var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == model.StudentId);
