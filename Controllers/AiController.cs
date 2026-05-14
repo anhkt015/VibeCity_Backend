@@ -118,7 +118,7 @@ namespace VibeCity_API.Controllers
                     if (string.IsNullOrWhiteSpace(rawText) && !string.IsNullOrEmpty(groqKey))
                     {
                         Console.WriteLine("🔄 OpenRouter tạch, đang dùng Groq...");
-                        rawText = await CallChatApi("https://api.groq.com/openai/v1/chat/completions", groqKey, "llama3-8b-8192", prompt);
+                        rawText = await CallChatApi("https://api.groq.com/openai/v1/chat/completions", groqKey, "llama-3.3-70b-versatile", prompt);
                     }
                 }
 
