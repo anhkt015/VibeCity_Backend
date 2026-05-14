@@ -85,58 +85,83 @@ namespace VibeCity_API.Controllers
                                 "Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
 
                 string rawText = "";
+
+                // --- TẦNG 1: GEMINI 2.5 ---
                 try
                 {
                     var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
-
-                    // Nếu response hợp lệ và có text
                     rawText = response?.Text ?? "";
 
-                    // GIA CỐ: Nếu Gemini trả về text nhưng chứa thông báo lỗi quota
-                    if (rawText.Contains("exceeded your current quota") || rawText.Contains("429"))
+                    // KIỂM TRA GIA CỐ: Nếu Gemini nhả text nhưng là text báo lỗi Quota
+                    if (rawText.Contains("error") || rawText.Contains("quota") || rawText.Contains("429") || !rawText.Contains("{"))
                     {
-                        Console.WriteLine("⚠️ Phát hiện Gemini trả về text lỗi Quota. Hủy kết quả để dùng dự phòng.");
+                        Console.WriteLine("⚠️ Gemini 2.5 trả về nội dung lỗi hoặc không có JSON. Đang kích hoạt dự phòng...");
                         rawText = "";
                     }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[Gemini Error]: {ex.Message}");
-                    rawText = ""; // Ép về rỗng để kích hoạt IF bên dưới
+                    rawText = "";
                 }
 
-                // --- TẦNG 2 & 3: DỰ PHÒNG ---
-                if (string.IsNullOrWhiteSpace(rawText) || !rawText.Contains("{"))
+                // --- TẦNG 2 & 3: DỰ PHÒNG (OPENROUTER & GROQ) ---
+                if (string.IsNullOrWhiteSpace(rawText))
                 {
                     if (!string.IsNullOrEmpty(apiOpenRouter))
                     {
-                        Console.WriteLine("🔄 Gemini tạch, đang gọi OpenRouter...");
+                        Console.WriteLine("🔄 Đang dùng OpenRouter cứu bồ...");
                         rawText = await CallChatApi("https://openrouter.ai/api/v1/chat/completions", apiOpenRouter, "meta-llama/llama-3-8b-instruct:free", prompt);
                     }
 
-                    if ((string.IsNullOrWhiteSpace(rawText) || !rawText.Contains("{")) && !string.IsNullOrEmpty(groqKey))
+                    if (string.IsNullOrWhiteSpace(rawText) && !string.IsNullOrEmpty(groqKey))
                     {
-                        Console.WriteLine("🔄 OpenRouter tạch, đang gọi Groq...");
+                        Console.WriteLine("🔄 OpenRouter tạch, đang dùng Groq...");
                         rawText = await CallChatApi("https://api.groq.com/openai/v1/chat/completions", groqKey, "llama3-8b-8192", prompt);
                     }
                 }
 
+                // --- XỬ LÝ KẾT QUẢ ---
                 if (!string.IsNullOrEmpty(rawText))
                 {
                     var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
                     if (match.Success)
                     {
-                        var resultObject = JsonConvert.DeserializeObject<AiResponse>(match.Value);
-                        if (resultObject != null) return Ok(resultObject);
+                        try
+                        {
+                            var resultObject = JsonConvert.DeserializeObject<AiResponse>(match.Value);
+                            if (resultObject != null) return Ok(resultObject);
+                        }
+                        catch { Console.WriteLine("❌ Lỗi Parse JSON từ AI."); }
                     }
                 }
 
-                return StatusCode(500, new { error = "AI tạm thời không phản hồi." });
+                // --- CỬA CHẶN CUỐI CÙNG: TRẢ VỀ DỮ LIỆU CỨNG ---
+                // Tránh trả về lỗi 500 để Game không bị crash/đứng hình
+                Console.WriteLine("🆘 Tất cả AI đều tạch. Trả về Quiz mặc định.");
+                return Ok(new AiResponse
+                {
+                    advice = "Hệ thống AI đang bảo trì một chút, Nhật Anh hãy làm tạm bài tập này để ôn kiến thức nhé!",
+                    closingQuestion = "Cố gắng đạt điểm tối đa để cộng GPA nha!",
+                    quiz = new List<QuizQuestion>
+                    {
+                        new QuizQuestion {
+                            question = "Trong kỹ thuật số, cổng nào thực hiện phép toán cộng logic?",
+                            options = new List<string> { "AND", "OR", "NOT", "XOR" },
+                            answer = 1
+                        },
+                        new QuizQuestion {
+                            question = "Hệ thống số nhị phân sử dụng bao nhiêu ký số?",
+                            options = new List<string> { "1", "2", "8", "10" },
+                            answer = 1
+                        }
+                    }
+                });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = "Lỗi hệ thống nghiêm trọng: " + ex.Message });
             }
         }
 
