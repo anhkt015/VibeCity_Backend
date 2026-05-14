@@ -169,26 +169,7 @@ namespace VibeCity_API.Controllers
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
 
-        private async Task<string> CallOpenRouter(string apiKey, string prompt)
-        {
-            try
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Post, "https://openrouter.ai/api/v1/chat/completions");
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-                var body = new
-                {
-                    model = "meta-llama/llama-3-8b-instruct:free",
-                    messages = new[] { new { role = "user", content = prompt } }
-                };
-                request.Content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
-                var response = await _httpClient.SendAsync(request);
-                var result = await response.Content.ReadAsStringAsync();
-                var settings = new JsonSerializerSettings { MissingMemberHandling = MissingMemberHandling.Ignore };
-                dynamic? json = JsonConvert.DeserializeObject(result, settings);
-                return json?.choices[0].message.content ?? "";
-            }
-            catch { return ""; }
-        }
+       
         private async Task<string> CallChatApi(string url, string key, string model, string prompt)
         {
             try
