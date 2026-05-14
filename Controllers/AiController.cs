@@ -112,7 +112,7 @@ namespace VibeCity_API.Controllers
                     if (!string.IsNullOrEmpty(apiOpenRouter))
                     {
                         Console.WriteLine("🔄 Đang dùng OpenRouter cứu bồ...");
-                        rawText = await CallChatApi("https://openrouter.ai/api/v1/chat/completions", apiOpenRouter, "meta-llama/llama-3-8b-instruct:free", prompt);
+                        rawText = await CallChatApi("https://openrouter.ai/api/v1/chat/completions", apiOpenRouter, "google/gemini-2.0-flash-001", prompt);
                     }
 
                     if (string.IsNullOrWhiteSpace(rawText) && !string.IsNullOrEmpty(groqKey))
