@@ -71,6 +71,7 @@ namespace VibeCity_API.Controllers
 
                 var apiKey1 = Environment.GetEnvironmentVariable("Gemini_API_Key") ?? _configuration["Gemini_API_Key"] ?? "";
                 var apiOpenRouter = Environment.GetEnvironmentVariable("OpenRouter_API_Key") ?? _configuration["OpenRouter_API_Key"];
+                var groqKey = Environment.GetEnvironmentVariable("Groq_API_Key") ?? _configuration["Groq_API_Key"];
 
                 string subjectList = (subjects != null && subjects.Count > 0) ? string.Join(", ", subjects) : "các môn chuyên ngành";
 
@@ -84,38 +85,51 @@ namespace VibeCity_API.Controllers
                                 "Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
 
                 string rawText = "";
+                // --- TẦNG 1: GEMINI 2.5 ---
                 try
                 {
-                    // Đổi về gemini-1.5-flash để ổn định nhất
                     var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
                 }
-                catch { rawText = ""; }
-
-                // Lấy thêm Key Groq từ config
-                var groqKey = Environment.GetEnvironmentVariable("Groq_API_Key") ?? _configuration["Groq_API_Key"];
-
-                if (string.IsNullOrEmpty(rawText) || !rawText.Contains("{"))
+                catch (Exception ex)
                 {
-                    // Thử OpenRouter trước
+                    Console.WriteLine($"[Gemini Error]: {ex.Message}");
+                    rawText = "";
+                }
+
+                // --- TẦNG 2 & 3: DỰ PHÒNG ---
+                if (string.IsNullOrWhiteSpace(rawText) || !rawText.Contains("{"))
+                {
                     if (!string.IsNullOrEmpty(apiOpenRouter))
+                    {
+                        Console.WriteLine("🔄 Gemini tạch, đang gọi OpenRouter...");
                         rawText = await CallChatApi("https://openrouter.ai/api/v1/chat/completions", apiOpenRouter, "meta-llama/llama-3-8b-instruct:free", prompt);
+                    }
 
-                    // Nếu vẫn tạch thì gọi Groq (Dự phòng cuối)
-                    if ((string.IsNullOrEmpty(rawText) || !rawText.Contains("{")) && !string.IsNullOrEmpty(groqKey))
+                    if ((string.IsNullOrWhiteSpace(rawText) || !rawText.Contains("{")) && !string.IsNullOrEmpty(groqKey))
+                    {
+                        Console.WriteLine("🔄 OpenRouter tạch, đang gọi Groq...");
                         rawText = await CallChatApi("https://api.groq.com/openai/v1/chat/completions", groqKey, "llama3-8b-8192", prompt);
+                    }
                 }
 
-                var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
-                if (match.Success)
+                if (!string.IsNullOrEmpty(rawText))
                 {
-                    var resultObject = JsonConvert.DeserializeObject<AiResponse>(match.Value);
-                    if (resultObject != null) return Ok(resultObject);
+                    var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
+                    if (match.Success)
+                    {
+                        var resultObject = JsonConvert.DeserializeObject<AiResponse>(match.Value);
+                        if (resultObject != null) return Ok(resultObject);
+                    }
                 }
+
                 return StatusCode(500, new { error = "AI tạm thời không phản hồi." });
             }
-            catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
         }
 
         // 2. ENDPOINT: NỘP BÀI QUIZ
