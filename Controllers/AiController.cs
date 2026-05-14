@@ -85,17 +85,25 @@ namespace VibeCity_API.Controllers
                                 "Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
 
                 string rawText = "";
-                // --- TẦNG 1: GEMINI 2.5 ---
                 try
                 {
                     var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
+
+                    // Nếu response hợp lệ và có text
                     rawText = response?.Text ?? "";
+
+                    // GIA CỐ: Nếu Gemini trả về text nhưng chứa thông báo lỗi quota
+                    if (rawText.Contains("exceeded your current quota") || rawText.Contains("429"))
+                    {
+                        Console.WriteLine("⚠️ Phát hiện Gemini trả về text lỗi Quota. Hủy kết quả để dùng dự phòng.");
+                        rawText = "";
+                    }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[Gemini Error]: {ex.Message}");
-                    rawText = "";
+                    rawText = ""; // Ép về rỗng để kích hoạt IF bên dưới
                 }
 
                 // --- TẦNG 2 & 3: DỰ PHÒNG ---
