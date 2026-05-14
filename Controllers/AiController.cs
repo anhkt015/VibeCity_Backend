@@ -87,7 +87,7 @@ namespace VibeCity_API.Controllers
                 try
                 {
                     // Đổi về gemini-1.5-flash để ổn định nhất
-                    var client = new GenerativeModel(apiKey1, "gemini-1.5-flash");
+                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
                     var response = await client.GenerateContentAsync(prompt);
                     rawText = response?.Text ?? "";
                 }

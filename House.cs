@@ -6,5 +6,5 @@
     public float PosY { get; set; }
     public float PosZ { get; set; }
     public float RotY { get; set; }
-    public string Timestamp { get; set; }
+    public string? Timestamp { get; set; }
 }
