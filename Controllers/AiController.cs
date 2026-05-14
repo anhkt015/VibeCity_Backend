@@ -93,9 +93,18 @@ namespace VibeCity_API.Controllers
                 }
                 catch { rawText = ""; }
 
+                // Lấy thêm Key Groq từ config
+                var groqKey = Environment.GetEnvironmentVariable("Groq_API_Key") ?? _configuration["Groq_API_Key"];
+
                 if (string.IsNullOrEmpty(rawText) || !rawText.Contains("{"))
                 {
-                    if (!string.IsNullOrEmpty(apiOpenRouter)) rawText = await CallOpenRouter(apiOpenRouter, prompt);
+                    // Thử OpenRouter trước
+                    if (!string.IsNullOrEmpty(apiOpenRouter))
+                        rawText = await CallChatApi("https://openrouter.ai/api/v1/chat/completions", apiOpenRouter, "meta-llama/llama-3-8b-instruct:free", prompt);
+
+                    // Nếu vẫn tạch thì gọi Groq (Dự phòng cuối)
+                    if ((string.IsNullOrEmpty(rawText) || !rawText.Contains("{")) && !string.IsNullOrEmpty(groqKey))
+                        rawText = await CallChatApi("https://api.groq.com/openai/v1/chat/completions", groqKey, "llama3-8b-8192", prompt);
                 }
 
                 var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
@@ -176,6 +185,29 @@ namespace VibeCity_API.Controllers
                 var result = await response.Content.ReadAsStringAsync();
                 var settings = new JsonSerializerSettings { MissingMemberHandling = MissingMemberHandling.Ignore };
                 dynamic? json = JsonConvert.DeserializeObject(result, settings);
+                return json?.choices[0].message.content ?? "";
+            }
+            catch { return ""; }
+        }
+        private async Task<string> CallChatApi(string url, string key, string model, string prompt)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, url);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+
+                var body = new
+                {
+                    model = model,
+                    messages = new[] { new { role = "user", content = prompt } },
+                    response_format = new { type = "json_object" } // Ép AI nhả JSON
+                };
+
+                request.Content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
+                var response = await _httpClient.SendAsync(request);
+                var result = await response.Content.ReadAsStringAsync();
+
+                dynamic? json = JsonConvert.DeserializeObject(result);
                 return json?.choices[0].message.content ?? "";
             }
             catch { return ""; }
