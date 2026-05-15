@@ -61,7 +61,7 @@ namespace VibeCity_API.Controllers
 
         // 1. ENDPOINT: TƯ VẤN VÀ TẠO QUIZ
         [HttpPost("consult")]
-        public async Task<IActionResult> GetAiAdvice((string studentId, [FromBody] List<string> subjects))
+        public async Task<IActionResult> GetAiAdvice(string studentId, [FromBody] List<string> subjects)
         {
             try
             {
@@ -177,6 +177,7 @@ namespace VibeCity_API.Controllers
                 if (!isFail)
                 {
                     var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == res.StudentId);
+                    if (student == null) return BadRequest(new { message = "StudentId không hợp lệ!" }); // Thêm dòng này
                     if (student != null)
                     {
                         // FIX LỖI CS0019: Cộng trực tiếp vì double không bao giờ null (mặc định 0.0)
