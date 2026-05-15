@@ -18,7 +18,7 @@ namespace VibeCity_API.Data
         public double RotY { get; set; }
 
         // Gán mặc định là chuỗi rỗng để tránh lỗi Warning Null
-        public string? Timestamp { get; set; } = string.Empty;
+        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     }
     public class Student
     {
@@ -70,6 +70,7 @@ namespace VibeCity_API.Data
             try
             {
                 // Thêm vào Database
+                data.Timestamp = DateTime.UtcNow;
                 _context.Buildings.Add(data);
 
                 // Đợi SQL lưu xong để lấy được cái ID tự động sinh ra
