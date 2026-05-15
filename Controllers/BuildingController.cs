@@ -6,48 +6,60 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace VibeCity_API.Data
 {
-    // --- Model chứa dữ liệu nhà (Đã fix lỗi Double & Null) ---
+    // --- Model chứa dữ liệu nhà ---
     public class BuildingDto
     {
         [Key]
         public int Id { get; set; }
+
         public int BuildingType { get; set; }
+
         public double PosX { get; set; }
         public double PosY { get; set; }
         public double PosZ { get; set; }
+
         public double RotY { get; set; }
 
-        // Gán mặc định là chuỗi rỗng để tránh lỗi Warning Null
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     }
+
     public class Student
     {
         [Key]
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int Id { get; set; }
+
         public string StudentId { get; set; } = string.Empty;
-        public string Password { get; set; } = string.Empty;// MSSV của Nhật Anh
+        public string Password { get; set; } = string.Empty;
+
         public string FullName { get; set; } = string.Empty;
-        public string Major { get; set; } = string.Empty;     // Ngành học (VD: Robot & AI)
-        public double Gpa { get; set; }       // Để AI biết ông học giỏi hay không mà động viên
+        public string Major { get; set; } = string.Empty;
+
+        public double Gpa { get; set; }
     }
+
     public class NpcDto
     {
         [Key]
         public int Id { get; set; }
+
         public string NpcType { get; set; } = "Teacher";
+
         public double SpawnX { get; set; }
         public double SpawnY { get; set; }
         public double SpawnZ { get; set; }
+
         public double InteractionRadius { get; set; } = 3.0;
     }
+
     public class LessonDto
     {
         [Key]
         public int Id { get; set; }
+
         public string SubjectName { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
-        public string QuizJson { get; set; } = string.Empty; // Lưu 5 câu hỏi trắc nghiệm
+        public string QuizJson { get; set; } = string.Empty;
     }
 
     [Route("api/[controller]")]
@@ -61,81 +73,94 @@ namespace VibeCity_API.Data
             _context = context;
         }
 
-        // 1. API Xây nhà (POST) - Nhật Anh dùng cái này để Lưu
+        // 1. API Xây nhà (POST)
         [HttpPost]
         public async Task<IActionResult> Post([FromBody] BuildingDto data)
         {
-            if (data == null) return BadRequest("Dữ liệu từ Nhật Anh gửi sang bị trống!");
+            if (data == null)
+                return BadRequest(new { error = "Dữ liệu gửi sang bị trống!" });
 
             try
             {
-                // Thêm vào Database
+                data.Id = 0;
                 data.Timestamp = DateTime.UtcNow;
-                _context.Buildings.Add(data);
 
-                // Đợi SQL lưu xong để lấy được cái ID tự động sinh ra
+                _context.Buildings.Add(data);
                 await _context.SaveChangesAsync();
 
                 Console.WriteLine($"✅ [POST] Đã lưu nhà loại {data.BuildingType} thành công vào SQL!");
 
-                // Trả về cho Unity toàn bộ thông tin nhà kèm theo ID thực tế
                 return Ok(new
                 {
                     message = "Lưu thành công!",
                     id = data.Id,
                     type = data.BuildingType,
+                    posX = data.PosX,
+                    posY = data.PosY,
+                    posZ = data.PosZ,
+                    rotY = data.RotY,
+                    timestamp = data.Timestamp,
                     status = "Success"
                 });
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ [POST] Lỗi khi lưu: {ex.Message}");
-                return StatusCode(500, "Lỗi Server rồi ní ơi!");
+                return StatusCode(500, new
+                {
+                    error = "Lỗi server khi lưu nhà!",
+                    detail = ex.Message
+                });
             }
         }
 
-        // 2. API Lấy danh sách nhà (GET) - Nhật Anh dùng cái này để Load bản đồ
+        // 2. API Lấy danh sách nhà (GET)
         [HttpGet]
         public async Task<ActionResult<IEnumerable<BuildingDto>>> GetBuildings()
         {
             try
             {
-                // Lấy danh sách nhà, sắp xếp theo ID để load cho đúng thứ tự xây
                 var buildings = await _context.Buildings
-                                              .OrderBy(b => b.Id)
-                                              .ToListAsync();
+                    .OrderBy(b => b.Id)
+                    .ToListAsync();
 
-                Console.WriteLine($"🔍 [GET] Đã lấy {buildings.Count} căn nhà gửi cho Nhật Anh.");
+                Console.WriteLine($"🔍 [GET] Đã lấy {buildings.Count} căn nhà gửi cho Unity.");
                 return Ok(buildings);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ [GET] Lỗi khi lấy dữ liệu: {ex.Message}");
-                return StatusCode(500, "Server không nhả dữ liệu được!");
+                return StatusCode(500, new
+                {
+                    error = "Server không lấy được dữ liệu nhà!",
+                    detail = ex.Message
+                });
             }
         }
-        // Endpoint Đăng nhập sử dụng trực tiếp class Student
+
+        // 3. API Đăng nhập
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] Student loginInfo)
         {
-            // Kiểm tra đầu vào
-            if (string.IsNullOrEmpty(loginInfo.StudentId) || string.IsNullOrEmpty(loginInfo.Password))
+            if (loginInfo == null)
+                return BadRequest(new { error = "Request body null!" });
+
+            if (string.IsNullOrWhiteSpace(loginInfo.StudentId) ||
+                string.IsNullOrWhiteSpace(loginInfo.Password))
             {
-                return BadRequest(new { message = "Vui lòng nhập đầy đủ MSSV và mật khẩu!" });
+                return BadRequest(new { error = "Vui lòng nhập đầy đủ Username và mật khẩu!" });
             }
 
-            // Tìm sinh viên trong bảng Students khớp cả MSSV và mật khẩu
             var student = await _context.Students
-                .FirstOrDefaultAsync(s => s.StudentId == loginInfo.StudentId && s.Password == loginInfo.Password);
+                .FirstOrDefaultAsync(s =>
+                    s.StudentId == loginInfo.StudentId &&
+                    s.Password == loginInfo.Password);
 
             if (student == null)
-            {
-                // Trả về lỗi 401 nếu không khớp
-                return Unauthorized(new { message = "Sai mã số sinh viên hoặc mật khẩu!" });
-            }
+                return Unauthorized(new { error = "Sai Username hoặc mật khẩu!" });
 
-            // Đăng nhập thành công: Gửi toàn bộ Profile về cho Unity
             Console.WriteLine($"✅ Sinh viên {student.FullName} đã đăng nhập thành công.");
+
             return Ok(new
             {
                 message = "Đăng nhập thành công!",
@@ -145,35 +170,78 @@ namespace VibeCity_API.Data
                 gpa = student.Gpa
             });
         }
-        // 1. API Kiểm tra User tồn tại chưa (Để Unity đổi Mode Login/Register)
+
+        // 4. API Kiểm tra User tồn tại chưa
         [HttpGet("check")]
-        public async Task<IActionResult> CheckUser(string studentId)
+        public async Task<IActionResult> CheckUser([FromQuery] string studentId)
         {
-            var exists = await _context.Students.AnyAsync(s => s.StudentId == studentId);
-            return Ok(new { exists = exists });
+            if (string.IsNullOrWhiteSpace(studentId))
+                return BadRequest(new { error = "Thiếu studentId!" });
+
+            bool exists = await _context.Students
+                .AnyAsync(s => s.StudentId == studentId);
+
+            return Ok(new { exists });
         }
 
-        // 2. API Đăng ký tài khoản mới
+        // 5. API Đăng ký tài khoản mới
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] Student newUser)
         {
-            // Bước 1: Kiểm tra xem MSSV này đã tồn tại chưa
-            if (await _context.Students.AnyAsync(s => s.StudentId == newUser.StudentId))
-            {
-                return BadRequest(new { error = "Mã số sinh viên này đã được đăng ký rồi!" });
-            }
+            if (newUser == null)
+                return BadRequest(new { error = "Request body null!" });
+
+            newUser.StudentId = newUser.StudentId?.Trim() ?? "";
+            newUser.Password = newUser.Password ?? "";
+            newUser.FullName = newUser.FullName?.Trim() ?? "";
+            newUser.Major = newUser.Major?.Trim() ?? "";
+
+            if (string.IsNullOrWhiteSpace(newUser.StudentId))
+                return BadRequest(new { error = "Thiếu Username/StudentId!" });
+
+            if (string.IsNullOrWhiteSpace(newUser.Password))
+                return BadRequest(new { error = "Thiếu mật khẩu!" });
+
+            if (string.IsNullOrWhiteSpace(newUser.FullName))
+                return BadRequest(new { error = "Thiếu họ tên!" });
+
+            if (string.IsNullOrWhiteSpace(newUser.Major))
+                return BadRequest(new { error = "Thiếu ngành học!" });
+
+            if (newUser.Gpa < 0 || newUser.Gpa > 4)
+                return BadRequest(new { error = "GPA phải nằm trong khoảng 0 - 4!" });
+
+            bool exists = await _context.Students
+                .AnyAsync(s => s.StudentId == newUser.StudentId);
+
+            if (exists)
+                return BadRequest(new { error = "Username/StudentId này đã được đăng ký rồi!" });
 
             try
             {
-                newUser.Id = 0; // QUAN TRỌNG: Đảm bảo ID bằng 0 để DB tự tăng, tránh trùng PK
+                newUser.Id = 0;
+
                 _context.Students.Add(newUser);
                 await _context.SaveChangesAsync();
 
-                return Ok(new { message = "Đăng ký thành công!" });
+                Console.WriteLine($"✅ Đăng ký thành công: {newUser.StudentId} - {newUser.FullName}");
+
+                return Ok(new
+                {
+                    message = "Đăng ký thành công!",
+                    studentId = newUser.StudentId,
+                    fullName = newUser.FullName,
+                    major = newUser.Major,
+                    gpa = newUser.Gpa
+                });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = "Lỗi trùng khóa hoặc lỗi hệ thống!", detail = ex.Message });
+                return StatusCode(500, new
+                {
+                    error = "Lỗi khi đăng ký tài khoản!",
+                    detail = ex.Message
+                });
             }
         }
     }

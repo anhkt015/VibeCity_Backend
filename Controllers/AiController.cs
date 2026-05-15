@@ -29,7 +29,13 @@ namespace VibeCity_API.Controllers
             _configuration = configuration;
         }
 
-        // --- CÁC CLASS DỮ LIỆU (DTOs) ---
+        // --- DTOs ---
+        public class AiConsultRequest
+        {
+            public string StudentId { get; set; } = string.Empty;
+            public List<string> Subjects { get; set; } = new List<string>();
+        }
+
         public class QuizQuestion
         {
             public string? question { get; set; }
@@ -59,138 +65,89 @@ namespace VibeCity_API.Controllers
             public float NewZ { get; set; }
         }
 
-        // 1. ENDPOINT: TƯ VẤN VÀ TẠO QUIZ
         [HttpPost("consult")]
-        public async Task<IActionResult> GetAiAdvice(string studentId, [FromBody] List<string> subjects)
+        public async Task<IActionResult> GetAiAdvice([FromBody] AiConsultRequest request)
         {
             try
             {
-                var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == studentId);
+                if (request == null || string.IsNullOrWhiteSpace(request.StudentId) || request.Subjects == null || request.Subjects.Count == 0)
+                    return BadRequest(new { error = "Dữ liệu đầu vào không hợp lệ." });
 
-            
-                string name = student?.FullName ?? "Lê Nhật Anh";
-                string major = student?.Major ?? "Robot & AI";
+                var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == request.StudentId);
+                if (student == null) return BadRequest(new { error = "Không tìm thấy sinh viên." });
 
-                var apiKey1 = Environment.GetEnvironmentVariable("Gemini_API_Key") ?? _configuration["Gemini_API_Key"] ?? "";
-                var apiOpenRouter = Environment.GetEnvironmentVariable("OpenRouter_API_Key") ?? _configuration["OpenRouter_API_Key"];
-                var groqKey = Environment.GetEnvironmentVariable("Groq_API_Key") ?? _configuration["Groq_API_Key"];
+                string name = student.FullName;
+                string major = student.Major;
+                string subjectList = string.Join(", ", request.Subjects.Select(s => s.Trim()));
 
-                string subjectList = (subjects != null && subjects.Count > 0) ? string.Join(", ", subjects) : "các môn chuyên ngành";
+                var apiKey1 = _configuration["Gemini_API_Key"];
+                var apiOpenRouter = _configuration["OpenRouter_API_Key"];
+                var groqKey = _configuration["Groq_API_Key"];
 
-                string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. Hãy tư vấn ngắn gọn về {subjectList}. " +
-                                "Yêu cầu trả về JSON THUẦN (không kèm text khác) với cấu trúc: " +
-                                "{ " +
-                                "\"advice\": \"Lời khuyên chuyên sâu...\", " +
-                                "\"closingQuestion\": \"Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!\", " +
-                                "\"quiz\": [ { \"question\": \"...\", \"options\": [\"A\", \"B\", \"C\", \"D\"], \"answer\": 0 } ] " +
-                                "} " +
-                                "Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
+                string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. GPA: {student.Gpa:0.00}. " +
+                                $"Tư vấn ngắn gọn về môn: {subjectList}. Trả về JSON THUẦN: " +
+                                "{ \"advice\": \"...\", \"closingQuestion\": \"...\", \"quiz\": [ { \"question\": \"...\", \"options\": [\"A\",\"B\",\"C\",\"D\"], \"answer\": 0 } ] } " +
+                                "Tạo đúng 5 câu hỏi.";
 
                 string rawText = "";
 
-                // --- TẦNG 1: GEMINI 2.5 ---
+                // Tầng 1: Gemini
                 try
                 {
-                    var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
-                    var response = await client.GenerateContentAsync(prompt);
-                    rawText = response?.Text ?? "";
-
-                    // KIỂM TRA GIA CỐ: Nếu Gemini nhả text nhưng là text báo lỗi Quota
-                    if (rawText.Contains("error") || rawText.Contains("quota") || rawText.Contains("429") || !rawText.Contains("{"))
+                    if (!string.IsNullOrEmpty(apiKey1))
                     {
-                        Console.WriteLine("⚠️ Gemini 2.5 trả về nội dung lỗi hoặc không có JSON. Đang kích hoạt dự phòng...");
-                        rawText = "";
+                        var client = new GenerativeModel(apiKey1, "gemini-1.5-flash"); // Dùng bản ổn định 1.5
+                        var res = await client.GenerateContentAsync(prompt);
+                        rawText = res?.Text ?? "";
                     }
                 }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[Gemini Error]: {ex.Message}");
-                    rawText = "";
-                }
+                catch { rawText = ""; }
 
-                // --- TẦNG 2 & 3: DỰ PHÒNG (OPENROUTER & GROQ) ---
-                if (string.IsNullOrWhiteSpace(rawText))
+                // Tầng 2 & 3: Dự phòng
+                if (string.IsNullOrWhiteSpace(rawText) || !rawText.Contains("{"))
                 {
                     if (!string.IsNullOrEmpty(apiOpenRouter))
-                    {
-                        Console.WriteLine("🔄 Đang dùng OpenRouter cứu bồ...");
                         rawText = await CallChatApi("https://openrouter.ai/api/v1/chat/completions", apiOpenRouter, "google/gemini-2.0-flash-001", prompt);
-                    }
 
                     if (string.IsNullOrWhiteSpace(rawText) && !string.IsNullOrEmpty(groqKey))
-                    {
-                        Console.WriteLine("🔄 OpenRouter tạch, đang dùng Groq...");
                         rawText = await CallChatApi("https://api.groq.com/openai/v1/chat/completions", groqKey, "llama-3.3-70b-versatile", prompt);
-                    }
                 }
 
-                // --- XỬ LÝ KẾT QUẢ ---
-                if (!string.IsNullOrEmpty(rawText))
+                if (!string.IsNullOrWhiteSpace(rawText))
                 {
                     var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
                     if (match.Success)
                     {
-                        try
-                        {
-                            var resultObject = JsonConvert.DeserializeObject<AiResponse>(match.Value);
-                            if (resultObject != null) return Ok(resultObject);
-                        }
-                        catch { Console.WriteLine("❌ Lỗi Parse JSON từ AI."); }
+                        var resultObj = JsonConvert.DeserializeObject<AiResponse>(match.Value);
+                        if (IsValidAiResponse(resultObj)) return Ok(resultObj);
                     }
                 }
 
-                // --- CỬA CHẶN CUỐI CÙNG: TRẢ VỀ DỮ LIỆU CỨNG ---
-                // Tránh trả về lỗi 500 để Game không bị crash/đứng hình
-                Console.WriteLine("🆘 Tất cả AI đều tạch. Trả về Quiz mặc định.");
-                return Ok(new AiResponse
-                {
-                    advice = "Hệ thống AI đang bảo trì một chút, Nhật Anh hãy làm tạm bài tập này để ôn kiến thức nhé!",
-                    closingQuestion = "Cố gắng đạt điểm tối đa để cộng GPA nha!",
-                    quiz = new List<QuizQuestion>
-                    {
-                        new QuizQuestion {
-                            question = "Trong kỹ thuật số, cổng nào thực hiện phép toán cộng logic?",
-                            options = new List<string> { "AND", "OR", "NOT", "XOR" },
-                            answer = 1
-                        },
-                        new QuizQuestion {
-                            question = "Hệ thống số nhị phân sử dụng bao nhiêu ký số?",
-                            options = new List<string> { "1", "2", "8", "10" },
-                            answer = 1
-                        }
-                    }
-                });
+                return Ok(BuildFallbackResponse(name, major, subjectList));
             }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = "Lỗi hệ thống nghiêm trọng: " + ex.Message });
-            }
+            catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
 
-        // 2. ENDPOINT: NỘP BÀI QUIZ
         [HttpPost("submit-quiz")]
         public async Task<IActionResult> SubmitQuiz([FromBody] QuizSubmission res)
         {
             try
             {
+                if (res == null || string.IsNullOrEmpty(res.StudentId)) return BadRequest();
+                var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == res.StudentId);
+                if (student == null) return BadRequest();
+
                 bool isFail = res.Score <= 2;
                 if (!isFail)
                 {
-                    var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == res.StudentId);
-                    if (student == null) return BadRequest(new { message = "StudentId không hợp lệ!" }); // Thêm dòng này
-                    if (student != null)
-                    {
-                        // FIX LỖI CS0019: Cộng trực tiếp vì double không bao giờ null (mặc định 0.0)
-                        student.Gpa += 0.01;
-                        await _context.SaveChangesAsync();
-                    }
+                    student.Gpa = Math.Min(4.0, student.Gpa + 0.01);
+                    await _context.SaveChangesAsync();
                 }
                 return Ok(new { success = true, breakSafeZone = isFail, finalScore = res.Score });
             }
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
 
-        // 3. ENDPOINT: HỒI SINH ZOMBIE
         [HttpPost("zombie/respawn")]
         public async Task<IActionResult> RespawnZombie([FromBody] ZombieUpdate model)
         {
@@ -199,45 +156,50 @@ namespace VibeCity_API.Controllers
                 var npc = await _context.Npcs.FirstOrDefaultAsync(n => n.Id == model.ZombieId);
                 if (npc != null)
                 {
-                    // Ép kiểu chuẩn từ float về double cho Supabase
-                    npc.SpawnX = (double)model.NewX;
-                    npc.SpawnY = (double)model.NewY;
-                    npc.SpawnZ = (double)model.NewZ;
+                    npc.SpawnX = model.NewX; npc.SpawnY = model.NewY; npc.SpawnZ = model.NewZ;
                 }
-
                 var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == model.StudentId);
-                if (student != null)
-                {
-                    // FIX LỖI CS0019: Cộng trực tiếp
-                    student.Gpa += 0.05;
-                    if (student.Gpa > 4.0) student.Gpa = 4.0;
-                }
+                if (student != null) student.Gpa = Math.Min(4.0, student.Gpa + 0.05);
 
                 await _context.SaveChangesAsync();
-                return Ok(new { message = "Zombie respawned and GPA increased!" });
+                return Ok(new { message = "Success" });
             }
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
 
-       
+        private bool IsValidAiResponse(AiResponse? r)
+        {
+            return r != null && !string.IsNullOrEmpty(r.advice) && r.quiz != null && r.quiz.Count > 0;
+        }
+
+        private AiResponse BuildFallbackResponse(string name, string major, string subjectList)
+        {
+            // ĐÂY MỚI LÀ JSON ĐÚNG:
+            string json = $@"
+            {{
+                ""advice"": ""Chào {name}, tôi có một vài lời khuyên về môn {subjectList} dành cho sinh viên {major}. Hãy tập trung vào bài tập thực hành nhé!"",
+                ""closingQuestion"": ""Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!"",
+                ""quiz"": [
+                    {{ ""question"": ""Cách tốt nhất để học {subjectList} là?"", ""options"": [""Chỉ xem video"", ""Thực hành code/bài tập"", ""Học thuộc lòng"", ""Bỏ qua""], ""answer"": 1 }},
+                    {{ ""question"": ""Mục tiêu của việc làm Quiz?"", ""options"": [""Lấy điểm"", ""Củng cố kiến thức"", ""Cho vui"", ""Giết thời gian""], ""answer"": 1 }},
+                    {{ ""question"": ""Khi gặp bài khó bạn nên?"", ""options"": [""Bỏ luôn"", ""Hỏi AI/Thầy cô"", ""Ngủ"", ""Xóa game""], ""answer"": 1 }},
+                    {{ ""question"": ""Môn {subjectList} giúp ích gì?"", ""options"": [""Không giúp gì"", ""Phát triển tư duy"", ""Tốn thời gian"", ""Chỉ để thi""], ""answer"": 1 }},
+                    {{ ""question"": ""Cần bao nhiêu thời gian học?"", ""options"": [""1 phút"", ""Nên học mỗi ngày"", ""1 năm mới học 1 lần"", ""Không cần học""], ""answer"": 1 }}
+                ]
+            }}";
+            return JsonConvert.DeserializeObject<AiResponse>(json)!;
+        }
+
         private async Task<string> CallChatApi(string url, string key, string model, string prompt)
         {
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, url);
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-
-                var body = new
-                {
-                    model = model,
-                    messages = new[] { new { role = "user", content = prompt } },
-                    response_format = new { type = "json_object" } // Ép AI nhả JSON
-                };
-
+                var body = new { model, messages = new[] { new { role = "user", content = prompt } }, response_format = new { type = "json_object" } };
                 request.Content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
                 var response = await _httpClient.SendAsync(request);
                 var result = await response.Content.ReadAsStringAsync();
-
                 dynamic? json = JsonConvert.DeserializeObject(result);
                 return json?.choices[0].message.content ?? "";
             }
