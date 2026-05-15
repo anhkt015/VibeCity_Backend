@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using VibeCity_API.Data;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace VibeCity_API.Data
 {
@@ -21,6 +22,8 @@ namespace VibeCity_API.Data
     }
     public class Student
     {
+        [Key]
+        [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int Id { get; set; }
         public string StudentId { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;// MSSV của Nhật Anh
@@ -153,12 +156,24 @@ namespace VibeCity_API.Data
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] Student newUser)
         {
+            // Bước 1: Kiểm tra xem MSSV này đã tồn tại chưa
             if (await _context.Students.AnyAsync(s => s.StudentId == newUser.StudentId))
-                return BadRequest(new { error = "Tài khoản đã tồn tại!" });
+            {
+                return BadRequest(new { error = "Mã số sinh viên này đã được đăng ký rồi!" });
+            }
 
-            _context.Students.Add(newUser);
-            await _context.SaveChangesAsync();
-            return Ok(new { message = "Đăng ký thành công!" });
+            try
+            {
+                newUser.Id = 0; // QUAN TRỌNG: Đảm bảo ID bằng 0 để DB tự tăng, tránh trùng PK
+                _context.Students.Add(newUser);
+                await _context.SaveChangesAsync();
+
+                return Ok(new { message = "Đăng ký thành công!" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Lỗi trùng khóa hoặc lỗi hệ thống!", detail = ex.Message });
+            }
         }
     }
 }
