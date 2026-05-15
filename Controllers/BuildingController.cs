@@ -141,5 +141,24 @@ namespace VibeCity_API.Data
                 gpa = student.Gpa
             });
         }
+        // 1. API Kiểm tra User tồn tại chưa (Để Unity đổi Mode Login/Register)
+        [HttpGet("check")]
+        public async Task<IActionResult> CheckUser(string studentId)
+        {
+            var exists = await _context.Students.AnyAsync(s => s.StudentId == studentId);
+            return Ok(new { exists = exists });
+        }
+
+        // 2. API Đăng ký tài khoản mới
+        [HttpPost("register")]
+        public async Task<IActionResult> Register([FromBody] Student newUser)
+        {
+            if (await _context.Students.AnyAsync(s => s.StudentId == newUser.StudentId))
+                return BadRequest(new { error = "Tài khoản đã tồn tại!" });
+
+            _context.Students.Add(newUser);
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Đăng ký thành công!" });
+        }
     }
 }
