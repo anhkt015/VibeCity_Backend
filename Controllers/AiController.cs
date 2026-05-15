@@ -61,11 +61,13 @@ namespace VibeCity_API.Controllers
 
         // 1. ENDPOINT: TƯ VẤN VÀ TẠO QUIZ
         [HttpPost("consult")]
-        public async Task<IActionResult> GetAiAdvice([FromBody] List<string> subjects)
+        public async Task<IActionResult> GetAiAdvice((string studentId, [FromBody] List<string> subjects))
         {
             try
             {
-                var student = await _context.Students.OrderBy(s => s.Id).FirstOrDefaultAsync();
+                var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == studentId);
+
+            
                 string name = student?.FullName ?? "Lê Nhật Anh";
                 string major = student?.Major ?? "Robot & AI";
 

@@ -110,5 +110,36 @@ namespace VibeCity_API.Data
                 return StatusCode(500, "Server không nhả dữ liệu được!");
             }
         }
+        // Endpoint Đăng nhập sử dụng trực tiếp class Student
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] Student loginInfo)
+        {
+            // Kiểm tra đầu vào
+            if (string.IsNullOrEmpty(loginInfo.StudentId) || string.IsNullOrEmpty(loginInfo.Password))
+            {
+                return BadRequest(new { message = "Vui lòng nhập đầy đủ MSSV và mật khẩu!" });
+            }
+
+            // Tìm sinh viên trong bảng Students khớp cả MSSV và mật khẩu
+            var student = await _context.Students
+                .FirstOrDefaultAsync(s => s.StudentId == loginInfo.StudentId && s.Password == loginInfo.Password);
+
+            if (student == null)
+            {
+                // Trả về lỗi 401 nếu không khớp
+                return Unauthorized(new { message = "Sai mã số sinh viên hoặc mật khẩu!" });
+            }
+
+            // Đăng nhập thành công: Gửi toàn bộ Profile về cho Unity
+            Console.WriteLine($"✅ Sinh viên {student.FullName} đã đăng nhập thành công.");
+            return Ok(new
+            {
+                message = "Đăng nhập thành công!",
+                studentId = student.StudentId,
+                fullName = student.FullName,
+                major = student.Major,
+                gpa = student.Gpa
+            });
+        }
     }
 }
