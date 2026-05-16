@@ -104,7 +104,7 @@ namespace VibeCity_API.Controllers
                 {
                     if (!string.IsNullOrEmpty(apiKey1))
                     {
-                        var client = new GenerativeModel(apiKey1, "gemini-1.5-flash"); // Hoặc đổi sang gemini-2.5-flash tùy ông nhé
+                        var client = new GenerativeModel(apiKey1, "gemini-2.5-flash"); // Hoặc đổi sang gemini-2.5-flash tùy ông nhé
                         var res = await client.GenerateContentAsync(prompt);
                         rawText = res?.Text ?? "";
 
