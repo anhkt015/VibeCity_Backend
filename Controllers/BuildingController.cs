@@ -305,10 +305,10 @@ namespace VibeCity_API.Data
 
         // ✅ GIẢI PHÁP CHÍ MẠNG: Dùng thuộc tính Column để ép Entity Framework 
         // dịch thuộc tính này sang chữ thường "studentid" hoặc đúng định dạng cột Supabase quét được
-        [Column("studentId")]
+        [Column("StudentId")]
         public string? StudentId { get; set; } = string.Empty;
 
-        [Column("isServerChung")]
+        [Column("IsServerChung")]
         public bool IsServerChung { get; set; } = true;
     }
 
