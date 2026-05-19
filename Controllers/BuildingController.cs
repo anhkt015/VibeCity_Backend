@@ -318,7 +318,7 @@ namespace VibeCity_API.Data
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int Id { get; set; }
 
-        [Column("studentId")]
+        [Column("StudentId")]
         public string StudentId { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;
 
