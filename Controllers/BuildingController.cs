@@ -21,6 +21,8 @@ namespace VibeCity_API.Data
         public double RotY { get; set; }
 
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+        public string StudentId { get; set; } = string.Empty; // Ai là người xây căn này?
+        public bool IsServerChung { get; set; } = true;
     }
 
     public class Student
@@ -80,15 +82,19 @@ namespace VibeCity_API.Data
             if (data == null)
                 return BadRequest(new { error = "Dữ liệu gửi sang bị trống!" });
 
+            if (string.IsNullOrEmpty(data.StudentId))
+                return BadRequest(new { error = "Không thể xây nhà do thiếu tài khoản StudentId người chơi!" });
+
             try
             {
                 data.Id = 0;
                 data.Timestamp = DateTime.UtcNow;
 
+                // Lưu xuống Supabase (Gồm cả StudentId và IsServerChung do Unity gửi lên)
                 _context.Buildings.Add(data);
                 await _context.SaveChangesAsync();
 
-                Console.WriteLine($"✅ [POST] Đã lưu nhà loại {data.BuildingType} thành công vào SQL!");
+                Console.WriteLine($"✅ [POST] Sinh viên '{data.StudentId}' đã xây nhà loại {data.BuildingType} ở Chế độ Server Chung = {data.IsServerChung}!");
 
                 return Ok(new
                 {
@@ -100,6 +106,8 @@ namespace VibeCity_API.Data
                     posZ = data.PosZ,
                     rotY = data.RotY,
                     timestamp = data.Timestamp,
+                    studentId = data.StudentId,
+                    isServerChung = data.IsServerChung,
                     status = "Success"
                 });
             }
@@ -115,16 +123,39 @@ namespace VibeCity_API.Data
         }
 
         // 2. API Lấy danh sách nhà (GET)
-        [HttpGet]
-        public async Task<ActionResult<IEnumerable<BuildingDto>>> GetBuildings()
+        [HttpGet("load-buildings")]
+        public async Task<ActionResult<IEnumerable<BuildingDto>>> GetBuildings([FromQuery] string studentId, [FromQuery] bool isChung)
         {
             try
             {
-                var buildings = await _context.Buildings
-                    .OrderBy(b => b.Id)
-                    .ToListAsync();
+                if (string.IsNullOrEmpty(studentId))
+                {
+                    return BadRequest(new { error = "Thiếu tham số studentId để nạp dữ liệu bản đồ!" });
+                }
 
-                Console.WriteLine($"🔍 [GET] Đã lấy {buildings.Count} căn nhà gửi cho Unity.");
+                List<BuildingDto> buildings;
+
+                if (isChung)
+                {
+                    // 🌐 [SERVER CHUNG]: Chỉ lấy những nhà có IsServerChung == true (Của tất cả mọi người)
+                    buildings = await _context.Buildings
+                        .Where(b => b.IsServerChung == true)
+                        .OrderBy(b => b.Id)
+                        .ToListAsync();
+
+                    Console.WriteLine($"🔍 [GET - SERVER CHUNG] Đã nạp thành công {buildings.Count} căn nhà của toàn trường gửi cho Unity.");
+                }
+                else
+                {
+                    // 🏡 [SERVER RIÊNG]: Cách ly hoàn toàn, CHỈ lấy nhà có IsServerChung == false VÀ do CHÍNH studentId này xây
+                    buildings = await _context.Buildings
+                        .Where(b => b.IsServerChung == false && b.StudentId == studentId)
+                        .OrderBy(b => b.Id)
+                        .ToListAsync();
+
+                    Console.WriteLine($"🔍 [GET - MAP CÁ NHÂN] Đã nạp thành công {buildings.Count} căn nhà riêng của sinh viên '{studentId}'.");
+                }
+
                 return Ok(buildings);
             }
             catch (Exception ex)
