@@ -311,26 +311,6 @@ namespace VibeCity_API.Data
         [Column("IsServerChung")]
         public bool IsServerChung { get; set; } = true;
     }
-    [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteBuilding(int id)
-        {
-            var building = await _context.Buildings.FindAsync(id);
-
-            if (building == null)
-                return NotFound("Không tìm thấy công trình");
-
-            if (building.IsServerChung)
-                return BadRequest("Không thể xóa công trình ở server chung");
-
-            _context.Buildings.Remove(building);
-            await _context.SaveChangesAsync();
-
-            return Ok(new
-            {
-                success = true,
-                buildingId = id
-            });
-        }
 
     public class Student
     {
@@ -470,6 +450,26 @@ namespace VibeCity_API.Data
                     detail = ex.Message
                 });
             }
+        }
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteBuilding(int id)
+        {
+            var building = await _context.Buildings.FindAsync(id);
+
+            if (building == null)
+                return NotFound("Không tìm thấy công trình");
+
+            if (building.IsServerChung)
+                return BadRequest("Không thể xóa công trình ở server chung");
+
+            _context.Buildings.Remove(building);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                buildingId = id
+            });
         }
 
         // 3. API Đăng nhập
