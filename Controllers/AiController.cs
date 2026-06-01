@@ -161,22 +161,41 @@ namespace VibeCity_API.Controllers
         }
 
         // 2. ENDPOINT: NỘP BÀI QUIZ
+        // 2. ENDPOINT: NỘP BÀI QUIZ (Đã nâng cấp theo chuẩn phản hồi GPA)
         [HttpPost("submit-quiz")]
         public async Task<IActionResult> SubmitQuiz([FromBody] QuizSubmission res)
         {
             try
             {
-                if (res == null || string.IsNullOrEmpty(res.StudentId)) return BadRequest();
+                if (res == null || string.IsNullOrEmpty(res.StudentId))
+                    return BadRequest(new { error = "Dữ liệu đầu vào trống!" });
+
                 var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == res.StudentId);
-                if (student == null) return BadRequest(new { message = "StudentId không hợp lệ!" });
+                if (student == null) return BadRequest(new { error = "StudentId không hợp lệ!" });
 
                 bool isFail = res.Score <= 2;
+                double gpaDelta = 0.0;
+                double oldGpa = student.Gpa;
+
                 if (!isFail)
                 {
-                    student.Gpa = Math.Min(4.0, student.Gpa + 0.01); // Giới hạn max GPA = 4.0
+                    gpaDelta = 0.05; // Theo quy định mới: +0.05 GPA khi pass quiz
+                    student.Gpa = Math.Min(4.0, student.Gpa + gpaDelta); // Giới hạn tối đa là 4.0
                     await _context.SaveChangesAsync();
                 }
-                return Ok(new { success = true, breakSafeZone = isFail, finalScore = res.Score });
+
+                Console.WriteLine($"📝 [QUIZ] Sinh viên {student.StudentId} nộp bài: {res.Score}/5đ. GPA cũ: {oldGpa} -> GPA mới: {student.Gpa}");
+
+                // Trả đầy đủ thông số về cho Unity cập nhật HUD giao diện
+                return Ok(new
+                {
+                    success = true,
+                    breakSafeZone = isFail,
+                    finalScore = res.Score,
+                    gpaDelta = gpaDelta,
+                    newGpa = Math.Round(student.Gpa, 2), // Làm tròn 2 chữ số thập phân cho đẹp HUD
+                    message = isFail ? "Quiz failed. GPA unchanged." : $"Quiz passed. GPA increased by {gpaDelta}."
+                });
             }
             catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
         }
@@ -187,23 +206,75 @@ namespace VibeCity_API.Controllers
         {
             try
             {
+                // 1. Kiểm tra dữ liệu đầu vào cơ bản từ Unity gửi lên
+                if (model == null)
+                    return BadRequest(new { error = "Dữ liệu cập nhật Zombie bị thiếu!" });
+
+                // 2. Tìm con Zombie trong Database để đè tọa độ mới lên
                 var npc = await _context.Npcs.FirstOrDefaultAsync(n => n.Id == model.ZombieId);
                 if (npc != null)
                 {
                     npc.SpawnX = (double)model.NewX;
                     npc.SpawnY = (double)model.NewY;
                     npc.SpawnZ = (double)model.NewZ;
-                }
-                var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == model.StudentId);
-                if (student != null)
-                {
-                    student.Gpa = Math.Min(4.0, student.Gpa + 0.05);
+
+                    // Lưu trực tiếp xuống Supabase
+                    await _context.SaveChangesAsync();
+
+                    Console.WriteLine($"🧟 [ZOMBIE] Zombie ID {model.ZombieId} hồi sinh thành công tại vị trí mới.");
+
+                    // 3. CHỈ TRẢ VỀ ĐÚNG "SUCCESS: TRUE" THEO Ý ÔNG (Đỡ mệt đầu, nhẹ băng thông)
+                    return Ok(new { success = true });
                 }
 
-                await _context.SaveChangesAsync();
-                return Ok(new { message = "Zombie respawned and GPA increased!" });
+                return NotFound(new { error = "Không tìm thấy Zombie với ID đã cho!" });
             }
-            catch (Exception ex) { return StatusCode(500, new { error = ex.Message }); }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Lỗi hệ thống khi hồi sinh Zombie!", detail = ex.Message });
+            }
+        }
+
+        // ── 🆕 THÊM ENDPOINT: XỬ LÝ KHI PLAYER BỊ ZOMBIE GIẾT ──────────────────
+        public class PlayerDeathRequest
+        {
+            public string StudentId { get; set; } = string.Empty;
+            public string Reason { get; set; } = "ZombieKilled";
+        }
+
+        [HttpPost("player-death")]
+        public async Task<IActionResult> PlayerDeath([FromBody] PlayerDeathRequest request)
+        {
+            try
+            {
+                if (request == null || string.IsNullOrEmpty(request.StudentId))
+                    return BadRequest(new { error = "Thiếu thông tin StudentId!" });
+
+                var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == request.StudentId);
+                if (student == null)
+                    return BadRequest(new { error = "Không tìm thấy sinh viên trong hệ thống!" });
+
+                double oldGpa = student.Gpa;
+                double gpaDelta = -0.1; // Bị giết: Trừ bớt 0.1 GPA
+
+                // Trừ điểm nhưng không được để GPA tụt xuống dưới 0
+                student.Gpa = Math.Max(0.0, student.Gpa + gpaDelta);
+                await _context.SaveChangesAsync();
+
+                Console.WriteLine($"💀 [PLAYER DIED] Sinh viên {student.StudentId} bị hạ gục bởi {request.Reason}. GPA: {oldGpa} -> {student.Gpa}");
+
+                return Ok(new
+                {
+                    success = true,
+                    gpaDelta = gpaDelta,
+                    newGpa = Math.Round(student.Gpa, 2),
+                    message = $"Player died. GPA decreased by {Math.Abs(gpaDelta)}."
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Lỗi hệ thống khi xử lý Player chết: " + ex.Message });
+            }
         }
 
         private bool IsValidAiResponse(AiResponse? r)
