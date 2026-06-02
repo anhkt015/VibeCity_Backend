@@ -326,6 +326,8 @@ namespace VibeCity_API.Data
         public string Major { get; set; } = string.Empty;
 
         public double Gpa { get; set; }
+        [Column("unlocked_skills")]
+        public string? UnlockedSkills { get; set; } = string.Empty;
     }
 
     public class NpcDto
@@ -498,7 +500,8 @@ namespace VibeCity_API.Data
                 studentId = student.StudentId,
                 fullName = student.FullName,
                 major = student.Major,
-                gpa = student.Gpa
+                gpa = student.Gpa,
+                unlockedSkills = student.UnlockedSkills
             });
         }
 
@@ -573,6 +576,47 @@ namespace VibeCity_API.Data
                     error = "Lỗi khi đăng ký tài khoản!",
                     detail = ex.Message
                 });
+            }
+        }
+        // 🟢 API CẬP NHẬT KỸ NĂNG MỚI ĐƯỢC MỞ KHÓA LÊN SUPABASE
+        [HttpPost("update-skills")]
+        public async Task<IActionResult> UpdateUnlockedSkills([FromForm] string studentId, [FromForm] int skillId)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(studentId))
+                    return BadRequest(new { error = "Thiếu StudentId!" });
+
+                // Tìm sinh viên trong database
+                var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == studentId);
+                if (student == null)
+                    return NotFound(new { error = "Không tìm thấy sinh viên!" });
+
+                // Xử lý nối chuỗi skill cũ với skill mới
+                if (string.IsNullOrEmpty(student.UnlockedSkills))
+                {
+                    student.UnlockedSkills = skillId.ToString(); // Nếu chưa có skill nào thì gán bằng ID skill mới luôn
+                }
+                else
+                {
+                    // Nếu đã có rồi, kiểm tra xem skillId này đã tồn tại trong chuỗi chưa để tránh trùng lặp
+                    var existingSkills = student.UnlockedSkills.Split(',').ToList();
+                    if (!existingSkills.Contains(skillId.ToString()))
+                    {
+                        existingSkills.Add(skillId.ToString());
+                        student.UnlockedSkills = string.Join(",", existingSkills); // Nối lại thành chuỗi dạng "1,4"
+                    }
+                }
+
+                // Lưu xuống Supabase
+                await _context.SaveChangesAsync();
+                Console.WriteLine($"⚙️ [SKILL UPDATE] Sinh viên {studentId} đã học thêm Skill ID: {skillId}. Chuỗi hiện tại: {student.UnlockedSkills}");
+
+                return Ok(new { success = true, currentSkills = student.UnlockedSkills });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Lỗi server khi cập nhật kỹ năng!", detail = ex.Message });
             }
         }
     }
