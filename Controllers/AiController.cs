@@ -337,6 +337,7 @@ namespace VibeCity_API.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class AiController : ControllerBase
     {
         private readonly AppDbContext _context;
