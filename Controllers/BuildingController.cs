@@ -456,6 +456,7 @@ namespace VibeCity_API.Data
     {
         [Key]
         public int Id { get; set; }
+        [Column("npctype")]
         public string NpcType { get; set; } = "Teacher";
         public double SpawnX { get; set; }
         public double SpawnY { get; set; }
