@@ -282,7 +282,8 @@ namespace VibeCity_API.Data
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema; // Thêm thư viện này để dùng thuộc tính [Column]
+using System.ComponentModel.DataAnnotations.Schema;
+using BCrypt.Net;// Thêm thư viện này để dùng thuộc tính [Column]
 
 namespace VibeCity_API.Data
 {
@@ -375,6 +376,7 @@ namespace VibeCity_API.Data
             {
                 data.Id = 0;
                 data.Timestamp = DateTime.UtcNow;
+
 
                 _context.Buildings.Add(data);
                 await _context.SaveChangesAsync();
@@ -487,8 +489,17 @@ namespace VibeCity_API.Data
             }
 
             var student = await _context.Students
-                .FirstOrDefaultAsync(s => s.StudentId == loginInfo.StudentId && s.Password == loginInfo.Password);
+             .FirstOrDefaultAsync(s => s.StudentId == loginInfo.StudentId);
 
+            if (student == null)
+                return Unauthorized(new { error = "Sai Username hoặc mật khẩu!" });
+
+            bool ok = BCrypt.Net.BCrypt.Verify(
+                loginInfo.Password,
+                student.Password);
+
+            if (!ok)
+                return Unauthorized(new { error = "Sai Username hoặc mật khẩu!" });
             if (student == null)
                 return Unauthorized(new { error = "Sai Username hoặc mật khẩu!" });
 
@@ -554,6 +565,8 @@ namespace VibeCity_API.Data
             try
             {
                 newUser.Id = 0;
+                newUser.Password =
+                BCrypt.Net.BCrypt.HashPassword(newUser.Password);
 
                 _context.Students.Add(newUser);
                 await _context.SaveChangesAsync();

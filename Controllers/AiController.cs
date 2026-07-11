@@ -95,7 +95,7 @@ namespace VibeCity_API.Controllers
                                 "\"closingQuestion\": \"Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!\", " +
                                 "\"quiz\": [ { \"question\": \"...\", \"options\": [\"A\", \"B\", \"C\", \"D\"], \"answer\": 0 } ] " +
                                 "} " +
-                                "Tạo đúng 5 câu hỏi trắc nghiệm liên quan.";
+                                "Tạo đúng 5 câu hỏi trắc nghiệm liên quan đến nội dung trong lời khuyên.";
 
                 string rawText = "";
 
