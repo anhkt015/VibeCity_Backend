@@ -15,6 +15,7 @@ namespace VibeCity_API.Data // Thay bằng Namespace của ông
         {
             base.OnModelCreating(modelBuilder);
 
+            modelBuilder.Entity<NpcDto>().Property(n => n.NpcType).HasColumnName("npctype");
             // Tự động chuyển tất cả string từ nvarchar sang text để hợp với PostgreSQL
             foreach (var entity in modelBuilder.Model.GetEntityTypes())
             {
