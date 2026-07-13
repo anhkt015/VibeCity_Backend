@@ -28,7 +28,6 @@ namespace VibeCity_API.Controllers
         private readonly AppDbContext _context;
         private readonly IConfiguration _configuration;
         private static readonly HttpClient _httpClient = new HttpClient();
-        // 🌟 BƯỚC 3: Thêm marker nhận diện và DTO bổ trợ
         private const string QuizJsonMarker = "<<<QUIZ_JSON>>>";
 
         public AiController(AppDbContext context, IConfiguration configuration)
@@ -84,7 +83,7 @@ namespace VibeCity_API.Controllers
             public string text { get; set; } = string.Empty;
         }
 
-        // 1. ENDPOINT: TƯ VẤN VÀ TẠO QUIZ - Yêu cầu xác thực JWT
+        // 1. ENDPOINT: TƯ VẤN VÀ TẠO QUIZ (Đã tối ưu bộ lọc JSON)
         [Authorize]
         [HttpPost("consult")]
         public async Task<IActionResult> GetAiAdvice([FromBody] AiConsultRequest request)
@@ -107,7 +106,7 @@ namespace VibeCity_API.Controllers
 
                 string prompt = $"Tôi là {name}, sinh viên {major} tại HCMUTE. GPA: {student.Gpa:0.00}. " +
                                 $"Hãy tư vấn ngắn gọn về môn: {subjectList}. " +
-                                "Yêu cầu trả về JSON THUẦN (không kèm text khác) với cấu trúc: " +
+                                "Yêu cầu bắt buộc trả về cấu trúc JSON sau: " +
                                 "{ " +
                                 "\"advice\": \"Lời khuyên chuyên sâu...\", " +
                                 "\"closingQuestion\": \"Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!\", " +
@@ -124,12 +123,6 @@ namespace VibeCity_API.Controllers
                         var client = new GenerativeModel(apiKey1, "gemini-2.5-flash");
                         var res = await client.GenerateContentAsync(prompt);
                         rawText = res?.Text ?? "";
-
-                        if (rawText.Contains("error") || rawText.Contains("quota") || rawText.Contains("429") || !rawText.Contains("{"))
-                        {
-                            Console.WriteLine("⚠️ Gemini gặp sự cố Quota hoặc lỗi định dạng. Kích hoạt dự phòng...");
-                            rawText = "";
-                        }
                     }
                 }
                 catch (Exception ex)
@@ -153,9 +146,11 @@ namespace VibeCity_API.Controllers
                     }
                 }
 
+                // Cải tiến bóc tách JSON bằng cách loại bỏ ký tự markdown bọc ngoài nếu có (như ```json ... ```)
                 if (!string.IsNullOrEmpty(rawText))
                 {
-                    var match = Regex.Match(rawText, @"\{.*\}", RegexOptions.Singleline);
+                    string cleanedRaw = Regex.Replace(rawText, @"^```json\s*|```\s*$", "", RegexOptions.IgnoreCase | RegexOptions.Multiline).Trim();
+                    var match = Regex.Match(cleanedRaw, @"\{.*\}", RegexOptions.Singleline);
                     if (match.Success)
                     {
                         try
@@ -167,13 +162,13 @@ namespace VibeCity_API.Controllers
                     }
                 }
 
-                Console.WriteLine("🆘 Tất cả AI đều tạch. Trả về Quiz mặc định an toàn.");
+                Console.WriteLine("🆘 Tất cả AI đều trả về JSON lỗi cấu trúc. Trả về Quiz mặc định an toàn.");
                 return Ok(BuildFallbackResponse(name, major, subjectList));
             }
             catch (Exception ex) { return StatusCode(500, new { error = "Lỗi hệ thống nghiêm trọng: " + ex.Message }); }
         }
 
-        // 2. ENDPOINT: NỘP BÀI QUIZ (Đã nâng cấp theo chuẩn phản hồi GPA)
+        // 2. ENDPOINT: NỘP BÀI QUIZ
         [HttpPost("submit-quiz")]
         public async Task<IActionResult> SubmitQuiz([FromBody] QuizSubmission res)
         {
@@ -191,8 +186,8 @@ namespace VibeCity_API.Controllers
 
                 if (!isFail)
                 {
-                    gpaDelta = 0.05; // Theo quy định mới: +0.05 GPA khi pass quiz
-                    student.Gpa = Math.Min(4.0, student.Gpa + gpaDelta); // Giới hạn tối đa là 4.0
+                    gpaDelta = 0.05;
+                    student.Gpa = Math.Min(4.0, student.Gpa + gpaDelta);
                     await _context.SaveChangesAsync();
                 }
 
@@ -204,7 +199,7 @@ namespace VibeCity_API.Controllers
                     breakSafeZone = isFail,
                     finalScore = res.Score,
                     gpaDelta = gpaDelta,
-                    newGpa = Math.Round(student.Gpa, 2), // Làm tròn 2 chữ số thập phân cho đẹp HUD
+                    newGpa = Math.Round(student.Gpa, 2),
                     message = isFail ? "Quiz failed. GPA unchanged." : $"Quiz passed. GPA increased by {gpaDelta}."
                 });
             }
@@ -228,8 +223,6 @@ namespace VibeCity_API.Controllers
                     npc.SpawnZ = (double)model.NewZ;
 
                     await _context.SaveChangesAsync();
-
-                    Console.WriteLine($"🧟 [ZOMBIE] Zombie ID {model.ZombieId} hồi sinh thành công tại vị trí mới.");
                     return Ok(new { success = true });
                 }
 
@@ -255,12 +248,10 @@ namespace VibeCity_API.Controllers
                     return BadRequest(new { error = "Không tìm thấy sinh viên trong hệ thống!" });
 
                 double oldGpa = student.Gpa;
-                double gpaDelta = -0.1; // Bị giết: Trừ bớt 0.1 GPA
+                double gpaDelta = -0.1;
 
                 student.Gpa = Math.Max(0.0, student.Gpa + gpaDelta);
                 await _context.SaveChangesAsync();
-
-                Console.WriteLine($"💀 [PLAYER DIED] Sinh viên {student.StudentId} bị hạ gục bởi {request.Reason}. GPA: {oldGpa} -> {student.Gpa}");
 
                 return Ok(new
                 {
@@ -276,7 +267,7 @@ namespace VibeCity_API.Controllers
             }
         }
 
-        // 🌟 BƯỚC 6: Thêm Endpoint Streaming Mới
+        // 5. ENDPOINT: STREAMING TƯ VẤN (Đã làm mượt bộ lọc gói dữ liệu)
         [Authorize]
         [HttpPost("consult-stream")]
         public async Task GetAiAdviceStream([FromBody] AiConsultRequest request)
@@ -423,14 +414,14 @@ namespace VibeCity_API.Controllers
                             await ProcessGeminiChunkAsync(generatedText, flushRemaining: false);
                         }
                     }
-                    catch { /* Bỏ qua lỗi packet JSON đơn lẻ */ }
+                    catch { }
                 }
 
                 await ProcessGeminiChunkAsync(string.Empty, flushRemaining: true);
 
                 if (quizSectionStarted && quizJsonText.Length > 0)
                 {
-                    string rawJson = quizJsonText.ToString();
+                    string rawJson = Regex.Replace(quizJsonText.ToString(), @"^```json\s*|```\s*$", "", RegexOptions.IgnoreCase | RegexOptions.Multiline).Trim();
                     var match = Regex.Match(rawJson, @"\{.*\}", RegexOptions.Singleline);
                     if (match.Success)
                     {
