@@ -332,6 +332,10 @@ using System.Net.Http;
 using System.Text;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
+using Newtonsoft.Json.Linq;
+using System.IO;
 
 namespace VibeCity_API.Controllers
 {
@@ -343,6 +347,8 @@ namespace VibeCity_API.Controllers
         private readonly AppDbContext _context;
         private readonly IConfiguration _configuration;
         private static readonly HttpClient _httpClient = new HttpClient();
+        // 🌟 BƯỚC 3: Thêm marker nhận diện và DTO bổ trợ
+        private const string QuizJsonMarker = "<<<QUIZ_JSON>>>";
 
         public AiController(AppDbContext context, IConfiguration configuration)
         {
@@ -480,6 +486,274 @@ namespace VibeCity_API.Controllers
             }
             catch (Exception ex) { return StatusCode(500, new { error = "Lỗi hệ thống nghiêm trọng: " + ex.Message }); }
         }
+        private async Task WriteSseEventAsync(string eventName, object payload)
+        {
+            string json = JsonConvert.SerializeObject(payload);
+
+            // Định dạng chuẩn cấu trúc SSE của hệ thống mạng
+            await Response.WriteAsync($"event: {eventName}\n");
+            await Response.WriteAsync($"data: {json}\n\n");
+
+            // Flush lập tức đẩy dữ liệu ra đường truyền mạng, không cho hệ thống giữ lại bộ đệm
+            await Response.Body.FlushAsync(HttpContext.RequestAborted);
+        }
+
+        // 🌟 BƯỚC 5: Thêm bộ làm sạch ký tự lạ Text khuyên bảo (Unicode safe)
+        private static string CleanAdviceText(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return string.Empty;
+
+            string normalized = input.Normalize(NormalizationForm.FormC);
+            var output = new StringBuilder(normalized.Length);
+
+            foreach (char character in normalized)
+            {
+                if (character == '\n' || character == '\r' || character == '\t')
+                {
+                    output.Append(character);
+                    continue;
+                }
+
+                if (char.IsControl(character))
+                    continue;
+
+                if (character == '<' || character == '>')
+                    continue; // Chống lỗi parse ký tự định dạng thẻ TextMeshPro
+
+                output.Append(character);
+            }
+
+            return output.ToString();
+        }
+
+        // 🌟 BƯỚC 6: Thêm Endpoint Streaming Mới
+        [Authorize]
+        [HttpPost("consult-stream")]
+        public async Task GetAiAdviceStream([FromBody] AiConsultRequest request)
+        {
+            // 1. Kiểm tra tính hợp lệ của dữ liệu đầu vào trước khi mở Stream
+            if (request == null || string.IsNullOrWhiteSpace(request.StudentId) || request.Subjects == null || request.Subjects.Count == 0)
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                Response.ContentType = "application/json; charset=utf-8";
+                await Response.WriteAsync(JsonConvert.SerializeObject(new { error = "Dữ liệu đầu vào không hợp lệ." }));
+                return;
+            }
+
+            var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == request.StudentId);
+            if (student == null)
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                Response.ContentType = "application/json; charset=utf-8";
+                await Response.WriteAsync(JsonConvert.SerializeObject(new { error = "Không tìm thấy sinh viên." }));
+                return;
+            }
+
+            string subjectList = string.Join(", ", request.Subjects.Where(sub => !string.IsNullOrWhiteSpace(sub)).Select(sub => sub.Trim()));
+            if (string.IsNullOrWhiteSpace(subjectList))
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                Response.ContentType = "application/json; charset=utf-8";
+                await Response.WriteAsync(JsonConvert.SerializeObject(new { error = "Chủ đề không hợp lệ." }));
+                return;
+            }
+
+            string apiKey = Environment.GetEnvironmentVariable("Gemini_API_Key") ?? _configuration["Gemini_API_Key"] ?? string.Empty;
+
+            // 2. Thiết lập Header mở cấu hình luồng dữ liệu Server-Sent Events (SSE)
+            Response.StatusCode = StatusCodes.Status200OK;
+            Response.ContentType = "text/event-stream; charset=utf-8";
+            Response.Headers["Cache-Control"] = "no-cache, no-transform";
+            Response.Headers["X-Accel-Buffering"] = "no";
+
+            // Tắt bộ nhớ đệm IIS/Kestrel để dữ liệu đi thời gian thực
+            HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+
+            // Báo cho Unity biết Server đang xử lý
+            await WriteSseEventAsync("status", new { status = "thinking" });
+
+            var pendingText = new StringBuilder();
+            var fullAdvice = new StringBuilder();
+            var quizJsonText = new StringBuilder();
+            bool quizSectionStarted = false;
+
+            // Hàm cục bộ đẩy text tư vấn về Client
+            async Task EmitAdviceAsync(string rawText)
+            {
+                string cleaned = CleanAdviceText(rawText);
+                if (string.IsNullOrEmpty(cleaned)) return;
+
+                fullAdvice.Append(cleaned);
+                await WriteSseEventAsync("advice", new StreamAdviceEvent { text = cleaned });
+            }
+
+            // Hàm cục bộ bóc tách phân tích dữ liệu Chunk đổ về từ Gemini
+            async Task ProcessGeminiChunkAsync(string newText, bool flushRemaining)
+            {
+                if (quizSectionStarted)
+                {
+                    if (!string.IsNullOrEmpty(newText))
+                        quizJsonText.Append(newText);
+                    return;
+                }
+
+                if (!string.IsNullOrEmpty(newText))
+                    pendingText.Append(newText);
+
+                string current = pendingText.ToString();
+                int markerIndex = current.IndexOf(QuizJsonMarker, StringComparison.Ordinal);
+
+                // Phát hiện marker chuyển đổi từ lời khuyên sang Quiz
+                if (markerIndex >= 0)
+                {
+                    string advicePart = current.Substring(0, markerIndex);
+                    await EmitAdviceAsync(advicePart);
+
+                    string quizPart = current.Substring(markerIndex + QuizJsonMarker.Length);
+                    quizJsonText.Append(quizPart);
+
+                    pendingText.Clear();
+                    quizSectionStarted = true;
+                    return;
+                }
+
+                int keepCharacters = flushRemaining ? 0 : QuizJsonMarker.Length - 1;
+                int safeCharacterCount = Math.Max(0, pendingText.Length - keepCharacters);
+
+                if (safeCharacterCount <= 0) return;
+
+                string safeAdvice = pendingText.ToString(0, safeCharacterCount);
+                pendingText.Remove(0, safeCharacterCount);
+
+                await EmitAdviceAsync(safeAdvice);
+            }
+
+            AiResponse? finalResult = null;
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(apiKey))
+                    throw new InvalidOperationException("Gemini API key is missing.");
+
+                // Cấu hình Prompt đồng bộ hệ thống định dạng chặt chẽ
+                string prompt = $"System Prompt và thông tin Sinh viên: {student.FullName}, ngành {student.Major}, GPA {student.Gpa:0.00}. " +
+                                $"Hãy tư vấn và giải thích rõ ràng về chủ đề: {subjectList}. " +
+                                $"\n\nSau khi viết xong lời khuyên, hãy ghi chính xác marker sau trên một dòng riêng: {QuizJsonMarker}\n" +
+                                $"Ngay sau marker, chỉ trả về JSON thuần chứa đúng 5 câu hỏi Quiz cấu trúc: {{ \"closingQuestion\": \"...\", \"quiz\": [ {{ \"question\": \"...\", \"options\": [\"A\", \"B\", \"C\", \"D\"], \"answer\": 0 }} ] }}";
+
+                // Sử dụng endpoint alt=sse của Gemini 2.5 Flash
+                string geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse";
+
+                var geminiBody = new
+                {
+                    contents = new[] { new { role = "user", parts = new[] { new { text = prompt } } } },
+                    generationConfig = new { temperature = 0.5, maxOutputTokens = 2500 }
+                };
+
+                using var geminiRequest = new HttpRequestMessage(HttpMethod.Post, geminiUrl);
+                geminiRequest.Headers.Add("x-goog-api-key", apiKey);
+                geminiRequest.Content = new StringContent(JsonConvert.SerializeObject(geminiBody), Encoding.UTF8, "application/json");
+
+                using HttpResponseMessage geminiResponse = await _httpClient.SendAsync(geminiRequest, HttpCompletionOption.ResponseHeadersRead, HttpContext.RequestAborted);
+
+                if (!geminiResponse.IsSuccessStatusCode)
+                    throw new InvalidOperationException($"Gemini trả về lỗi HTTP: {(int)geminiResponse.StatusCode}");
+
+                await using Stream responseStream = await geminiResponse.Content.ReadAsStreamAsync();
+                using var reader = new StreamReader(responseStream, Encoding.UTF8);
+
+                while (!reader.EndOfStream && !HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    string? line = await reader.ReadLineAsync();
+                    if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.Ordinal))
+                        continue;
+
+                    string packetJson = line.Substring("data:".Length).Trim();
+                    if (string.IsNullOrWhiteSpace(packetJson) || packetJson == "[DONE]")
+                        continue;
+
+                    try
+                    {
+                        JObject packet = JObject.Parse(packetJson);
+                        string generatedText = string.Concat(packet.SelectTokens("candidates[0].content.parts[*].text").Select(t => t.Value<string>() ?? string.Empty));
+
+                        if (!string.IsNullOrEmpty(generatedText))
+                        {
+                            await ProcessGeminiChunkAsync(generatedText, flushRemaining: false);
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        // Bỏ qua lỗi phân tích cục bộ dòng trống
+                    }
+                }
+
+                // Xử lý nốt ký tự cuối cùng
+                await ProcessGeminiChunkAsync(string.Empty, flushRemaining: true);
+
+                // 3. Tiến hành bốc tách khối JSON Quiz ở cuối luồng để gửi nguyên khối
+                if (quizSectionStarted)
+                {
+                    Match jsonMatch = Regex.Match(quizJsonText.ToString(), @"\{.*\}", RegexOptions.Singleline);
+                    if (jsonMatch.Success)
+                    {
+                        AiResponse? parsedResult = JsonConvert.DeserializeObject<AiResponse>(jsonMatch.Value);
+                        if (parsedResult?.quiz != null && parsedResult.quiz.Count == 5)
+                        {
+                            parsedResult.advice = fullAdvice.ToString().Trim();
+                            finalResult = parsedResult;
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("[AI Stream] Người chơi ngắt kết nối mạng hoặc tắt UI.");
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AI Stream Error] {ex.Message}");
+            }
+
+            // Cơ chế dự phòng cứu nguy hệ thống (Fallback Mechanism) nếu lỗi cấu trúc JSON
+            if (finalResult == null)
+            {
+                AiResponse fallback = BuildFallbackResponse(student.FullName, student.Major, subjectList);
+                if (fullAdvice.Length == 0)
+                {
+                    await EmitAdviceAsync(fallback.advice ?? string.Empty);
+                }
+                fallback.advice = fullAdvice.Length > 0 ? fullAdvice.ToString().Trim() : fallback.advice;
+                finalResult = fallback;
+            }
+
+            // Gửi cục data nguyên khối chứa cấu trúc thông tin Quiz
+            await WriteSseEventAsync("result", finalResult);
+
+            // Thông báo kết thúc kết nối stream
+            await WriteSseEventAsync("done", new { success = true });
+        }
+
+        // Hàm sinh Quiz dự phòng khi lỗi mạng hoặc AI trả về sai định dạng
+        private AiResponse BuildFallbackResponse(string name, string major, string subject)
+        {
+            return new AiResponse
+            {
+                advice = $"[Hệ thống] Xin chào {name}, hiện tại đường truyền học tập môn {subject} đang nghẽn nhẹ. Bạn hãy thực hiện bài ôn tập trắc nghiệm dưới đây nhé!",
+                closingQuestion = "Bấm gửi để làm lại Quiz mới nhé!",
+                quiz = new List<QuizItem>
+                {
+                    new QuizItem { question = $"Câu hỏi ôn tập kiến thức cơ bản về: {subject}?", options = new List<string>{"Đáp án A đúng","Đáp án B","Đáp án C","Đáp án D"}, answer = 0 },
+                    new QuizItem { question = "Chọn khẳng định đúng trong thiết kế hệ thống?", options = new List<string>{"Sai","Đúng","Không rõ","Tùy trường hợp"}, answer = 1 },
+                    new QuizItem { question = "Dữ liệu được lưu trữ an toàn ở đâu?", options = new List<string>{"Client","Không lưu","Database Server","Bộ nhớ tạm"}, answer = 2 },
+                    new QuizItem { question = "Thuật toán xử lý tối ưu luồng mạng?", options = new List<string>{"Không tối ưu","Dùng bộ đệm","Xử lý Streaming SSE","Tải lại trang"}, answer = 2 },
+                    new QuizItem { question = "Mục tiêu tối ưu trải nghiệm người chơi là gì?", options = new List<string>{"Tăng độ trễ","Game mượt mà hơn","Đồ họa nặng hơn","Tăng chi phí"}, answer = 1 }
+                }
+            };
+        }
+    }
 
         // 2. ENDPOINT: NỘP BÀI QUIZ - Yêu cầu xác thực JWT
         [Authorize]
@@ -594,19 +868,19 @@ namespace VibeCity_API.Controllers
 
         private AiResponse BuildFallbackResponse(string name, string major, string subjectList)
         {
-            string json = $@"
-            {{
-                ""advice"": ""Chào {name}, hệ thống AI hiện đang bận. Với sinh viên {major}, bạn nên tập trung nắm vững lý thuyết và thực hành nhiều bài tập về {subjectList}."",
-                ""closingQuestion"": ""Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!"",
-                ""quiz"": [
-                    {{ ""question"": ""Cách tốt nhất để học {subjectList} là gì?"", ""options"": [""Chỉ xem video"", ""Thực hành code/bài tập"", ""Học thuộc lòng"", ""Bỏ qua""], ""answer"": 1 }},
-                    {{ ""question"": ""Mục tiêu của việc làm Quiz?"", ""options"": [""Lấy điểm"", ""Củng cố kiến thức"", ""Cho vui"", ""Giết thời gian""], ""answer"": 1 }},
-                    {{ ""question"": ""Khi gặp bài khó trong môn {subjectList} bạn nên làm gì?"", ""options"": [""Bỏ luôn"", ""Hỏi AI/Thầy cô"", ""Ngủ"", ""Xóa game""], ""answer"": 1 }},
-                    {{ ""question"": ""Việc làm Quiz giúp ích gì cho bạn?"", ""options"": [""Ghi nhớ kiến thức"", ""Kiểm tra trình độ"", ""Tăng GPA"", ""Cả 3 phương án trên""], ""answer"": 3 }},
-                    {{ ""question"": ""Bạn có nên học nhóm môn này không?"", ""options"": [""Không bao giờ"", ""Nên, để trao đổi kiến thức"", ""Chỉ để chơi"", ""Tùy hứng""], ""answer"": 1 }}
-                ]
-            }}";
-            return JsonConvert.DeserializeObject<AiResponse>(json)!;
+            return new AiResponse
+            {
+                advice = $"Chào {name}, hệ thống AI hiện đang bận. Với sinh viên {major}, bạn nên tập trung nắm vững lý thuyết và thực hành nhiều bài tập về {subjectList}.",
+                closingQuestion = "Nếu không còn thắc mắc, hãy để trống ô nhập và bấm send để làm Quiz nhé!",
+                quiz = new List<QuizQuestion> // Đổi từ QuizItem thành QuizQuestion ở đây
+        {
+            new QuizQuestion { question = $"Cách tốt nhất để học tốt môn {subjectList} là gì?", options = new List<string>{"Chỉ xem video", "Thực hành bài tập", "Học thuộc lòng", "Bỏ qua"}, answer = 1 },
+            new QuizQuestion { question = "Mục tiêu của việc làm Quiz là gì?", options = new List<string>{"Lấy điểm", "Củng cố kiến thức", "Cho vui", "Giết thời gian"}, answer = 1 },
+            new QuizQuestion { question = $"Khi gặp bài khó trong môn {subjectList} bạn nên làm gì?", options = new List<string>{"Bỏ luôn", "Hỏi AI hoặc Thầy cô", "Ngủ", "Xóa game"}, answer = 1 },
+            new QuizQuestion { question = "Việc làm Quiz giúp ích gì cho bạn?", options = new List<string>{"Ghi nhớ kiến thức", "Kiểm tra trình độ", "Tăng GPA", "Cả 3 phương án trên"}, answer = 3 },
+            new QuizQuestion { question = "Bạn có nên học nhóm môn này không?", options = new List<string>{"Không bao giờ", "Nên, để trao đổi kiến thức", "Chỉ để chơi", "Tùy hứng"}, answer = 1 }
+        }
+            };
         }
 
         private async Task<string> CallChatApi(string url, string key, string model, string prompt)
