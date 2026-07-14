@@ -727,7 +727,10 @@ namespace VibeCity_API.Data
                 fullName = student.FullName,
                 major = student.Major,
                 gpa = student.Gpa,
-                unlockedSkills = student.UnlockedSkills
+                unlockedSkills = student.UnlockedSkills,
+                // Trả thêm thông tin để Unity khôi phục tiến trình
+                survivedDays = student.SurvivedDays,
+                totalSurvivalMinutes = student.TotalSurvivalMinutes
             });
         }
 
@@ -882,7 +885,9 @@ namespace VibeCity_API.Data
                     success = true,
                     message = "Đã tích lũy số ngày và số phút sinh tồn khi tắt game thành công!",
                     savedMinutes = actualMinutes,
-                    totalDays = student.SurvivedDays
+                    totalDays = student.SurvivedDays,
+                    // Trả thêm tổng số phút tích lũy thực tế trong DB
+                    totalSurvivalMinutes = student.TotalSurvivalMinutes
                 });
             }
             catch (Exception ex)
