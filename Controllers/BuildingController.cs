@@ -1,11 +1,16 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading;
+using System.Threading.Tasks;
 using BCrypt.Net;
 using Microsoft.AspNetCore.Authorization;
-using System.Security.Claims;
-using System.Text;
+using Microsoft.Extensions.Configuration;
 using VibeCity_API.Data;
 using VibeCity_API.Services;
 
@@ -429,6 +434,161 @@ namespace VibeCity_API.Data
                 return StatusCode(500, new { success = false, error = "Lỗi server!", detail = ex.Message });
             }
         }
+
+        // ==========================================
+        // KHU VỰC TÍCH HỢP: VÉ DỊCH CHUYỂN MAP 1 -> MAP 2
+        // ==========================================
+
+        // 1. API cấp vé dịch chuyển ở Map 1 (Đăng nhập Bearer Token)
+        [Authorize]
+        [HttpPost("generate-ticket")]
+        public async Task<IActionResult> GenerateTicket()
+        {
+            var studentId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                            ?? User.FindFirst("StudentId")?.Value
+                            ?? User.FindFirst("studentId")?.Value;
+
+            if (string.IsNullOrEmpty(studentId))
+                return Unauthorized(new { message = "Không tìm thấy thông tin sinh viên!" });
+
+            var ticketCode = Guid.NewGuid().ToString("N");
+
+            var ticket = new TeleportTicket
+            {
+                StudentId = studentId,
+                TicketCode = ticketCode,
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddSeconds(60) // Vé hết hạn sau 60s
+            };
+
+            _context.TeleportTickets.Add(ticket);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { ticketCode = ticketCode });
+        }
+
+        // 2. API xác thực vé dịch chuyển khi tải Map 2
+        [AllowAnonymous]
+        [HttpPost("verify-ticket")]
+        public async Task<IActionResult> VerifyTicket([FromBody] string ticketCode)
+        {
+            var ticket = await _context.TeleportTickets
+                .FirstOrDefaultAsync(t => t.TicketCode == ticketCode);
+
+            if (ticket == null)
+                return BadRequest(new { message = "Vé dịch chuyển không tồn tại!" });
+
+            if (ticket.ExpiresAt < DateTime.UtcNow)
+            {
+                _context.TeleportTickets.Remove(ticket);
+                await _context.SaveChangesAsync();
+                return BadRequest(new { message = "Vé dịch chuyển đã hết hạn!" });
+            }
+
+            var student = await _context.Students
+                .FirstOrDefaultAsync(s => s.StudentId == ticket.StudentId);
+
+            if (student == null)
+                return NotFound(new { message = "Không tìm thấy dữ liệu sinh viên này!" });
+
+            _context.TeleportTickets.Remove(ticket);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Xác thực vé thành công!",
+                studentId = student.StudentId,
+                fullName = student.FullName,
+                major = student.Major,
+                vibeCoin = student.VibeCoin
+            });
+        }
+
+
+        // ==========================================
+        // KHU VỰC TÍCH HỢP: NHẬN THƯỞNG CỔNG BÌNH MINH
+        // ==========================================
+
+        // 3. API nhận thưởng 50 VibeCoin khi chạm Cổng Bình Minh (Đăng nhập Bearer Token)
+        [Authorize]
+        [HttpPost("claim-dawn-reward")]
+        public async Task<IActionResult> ClaimDawnReward(
+            [FromBody] ClaimDawnGateRequest body,
+            CancellationToken cancellationToken)
+        {
+            if (body == null || string.IsNullOrWhiteSpace(body.NightCycleId))
+            {
+                return BadRequest(new { success = false, message = "Thiếu mã chu kỳ ban đêm." });
+            }
+
+            string? studentId = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                                ?? User.FindFirstValue("StudentId")
+                                ?? User.FindFirstValue("studentId")
+                                ?? User.FindFirstValue("sub");
+
+            if (string.IsNullOrWhiteSpace(studentId))
+            {
+                return Unauthorized(new { success = false, message = "Không xác định được người chơi." });
+            }
+
+            string nightCycleId = body.NightCycleId.Trim();
+
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+            bool alreadyClaimed = await _context.DawnGateRewards.AnyAsync(
+                x => x.StudentId == studentId && x.NightCycleId == nightCycleId,
+                cancellationToken);
+
+            if (alreadyClaimed)
+            {
+                var existingStudent = await _context.Students
+                    .FirstOrDefaultAsync(x => x.StudentId == studentId, cancellationToken);
+
+                return Ok(new
+                {
+                    success = true,
+                    alreadyClaimed = true,
+                    rewardAmount = 0,
+                    vibeCoin = existingStudent?.VibeCoin ?? 0,
+                    message = "Phần thưởng đêm này đã được nhận trước đó."
+                });
+            }
+
+            var student = await _context.Students
+                .FirstOrDefaultAsync(x => x.StudentId == studentId, cancellationToken);
+
+            if (student == null)
+            {
+                return NotFound(new { success = false, message = "Không tìm thấy tài khoản người chơi." });
+            }
+
+            student.VibeCoin += 50; // Cộng thẳng 50 VibeCoin vào Student
+
+            _context.DawnGateRewards.Add(new DawnGateReward
+            {
+                StudentId = studentId,
+                NightCycleId = nightCycleId,
+                RewardAmount = 50,
+                ClaimedAt = DateTime.UtcNow
+            });
+
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return Ok(new
+            {
+                success = true,
+                alreadyClaimed = false,
+                rewardAmount = 50,
+                vibeCoin = student.VibeCoin,
+                message = "Đã nhận thành công 50 VibeCoin từ Cổng Bình Minh."
+            });
+        }
+    } // Đóng class BuildingController
+
+    public sealed class ClaimDawnGateRequest
+    {
+        public string NightCycleId { get; set; } = string.Empty;
     }
 
     public class SkillUpdateRequest
@@ -441,4 +601,4 @@ namespace VibeCity_API.Data
         public int SurvivedDays { get; set; }
         public double SurvivalTime { get; set; }
     }
-}
+} // Đóng namespace VibeCity_API.Data

@@ -9,6 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Security.Claims;
 using VibeCity_API.Services;
+using System;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -75,6 +76,21 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+// --- TỰ ĐỘNG CHẠY MIGRATION LÊN SUPABASE KHI SERVER KHỞI ĐỘNG ---
+using (var scope = app.Services.CreateScope())
+{
+    try
+    {
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.Database.Migrate(); // Tự động quét và chạy migration để tạo bảng/cột mới
+        Console.WriteLine("=== ĐÃ CHẠY MIGRATION VÀ CẬP NHẬT DATABASE THÀNH CÔNG ===");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"=== LỖI KHI CHẠY MIGRATION: {ex.Message} ===");
+    }
+}
+
 // --- CẤU HÌNH MIDDLEWARE ---
 
 app.UseCors("AllowAll");
@@ -89,18 +105,5 @@ app.UseAuthentication(); // PHẢI CHẠY TRƯỚC AUTHORIZATION!
 app.UseAuthorization();
 
 app.MapControllers();
-using (var scope = app.Services.CreateScope())
-{
-    try
-    {
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        db.Database.Migrate(); // Tự động chạy Migration tạo bảng teleport_tickets trên Supabase
-        Console.WriteLine("=== ĐÃ CHẠY MIGRATION VÀ CẬP NHẬT DATABASE THÀNH CÔNG ===");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"=== LỖI KHI CHẠY MIGRATION: {ex.Message} ===");
-    }
-}
 
 app.Run();
