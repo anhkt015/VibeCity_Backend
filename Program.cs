@@ -9,6 +9,15 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()   // Cho phép mọi nguồn (bao gồm itch.io) gọi vào
+              .AllowAnyMethod()   // Cho phép POST, GET...
+              .AllowAnyHeader();  // Cho phép mọi Header truyền lên
+    });
+});
 
 // 1. Cấu hình Database (Npgsql cho Supabase)
 builder.Services.AddDbContext<AppDbContext>(options =>
