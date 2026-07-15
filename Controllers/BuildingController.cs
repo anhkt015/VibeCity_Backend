@@ -4,11 +4,10 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using BCrypt.Net;
 using Microsoft.AspNetCore.Authorization;
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using VibeCity_API.Data;
+using VibeCity_API.Services;
 
 namespace VibeCity_API.Data
 {
@@ -31,7 +30,6 @@ namespace VibeCity_API.Data
         public bool IsServerChung { get; set; } = true;
     }
 
-    // PHASE 2 — Thêm VibeCoin vào class Student
     public class Student
     {
         [Key]
@@ -55,7 +53,7 @@ namespace VibeCity_API.Data
         public double TotalSurvivalMinutes { get; set; }
 
         [Column("vibe_coin")]
-        public int VibeCoin { get; set; } = 1000; // Mặc định 1000 VibeCoin
+        public int VibeCoin { get; set; } = 1000;
     }
 
     public class NpcDto
@@ -85,11 +83,13 @@ namespace VibeCity_API.Data
     {
         private readonly AppDbContext _context;
         private readonly IConfiguration _configuration;
+        private readonly IJwtTokenService _jwtTokenService;
 
-        public BuildingController(AppDbContext context, IConfiguration configuration)
+        public BuildingController(AppDbContext context, IConfiguration configuration, IJwtTokenService jwtTokenService)
         {
             _context = context;
             _configuration = configuration;
+            _jwtTokenService = jwtTokenService;
         }
 
         // 1. API Xây nhà (POST) - ĐÃ BẢO MẬT
@@ -116,8 +116,6 @@ namespace VibeCity_API.Data
                 _context.Buildings.Add(data);
                 await _context.SaveChangesAsync();
 
-                Console.WriteLine($"✅ [POST] Sinh viên '{data.StudentId}' đã xây nhà loại {data.BuildingType} ở Chế độ Server Chung = {data.IsServerChung}!");
-
                 return Ok(new
                 {
                     message = "Lưu thành công!",
@@ -135,12 +133,7 @@ namespace VibeCity_API.Data
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ [POST] Lỗi khi lưu: {ex.Message}");
-                return StatusCode(500, new
-                {
-                    error = "Lỗi server khi lưu nhà!",
-                    detail = ex.Message
-                });
+                return StatusCode(500, new { error = "Lỗi server khi lưu nhà!", detail = ex.Message });
             }
         }
 
@@ -165,8 +158,6 @@ namespace VibeCity_API.Data
                         .Where(b => b.IsServerChung == true)
                         .OrderBy(b => b.Id)
                         .ToListAsync();
-
-                    Console.WriteLine($"🔍 [GET - SERVER CHUNG] Đã nạp thành công {buildings.Count} căn nhà của toàn trường gửi cho Unity.");
                 }
                 else
                 {
@@ -174,20 +165,13 @@ namespace VibeCity_API.Data
                         .Where(b => b.IsServerChung == false && b.StudentId == currentStudentId)
                         .OrderBy(b => b.Id)
                         .ToListAsync();
-
-                    Console.WriteLine($"🔍 [GET - MAP CÁ NHÂN] Đã nạp thành công {buildings.Count} căn nhà riêng của sinh viên '{currentStudentId}'.");
                 }
 
                 return Ok(buildings);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ [GET] Lỗi khi lấy dữ liệu: {ex.Message}");
-                return StatusCode(500, new
-                {
-                    error = "Server không lấy được dữ liệu nhà!",
-                    detail = ex.Message
-                });
+                return StatusCode(500, new { error = "Server không lấy được dữ liệu nhà!", detail = ex.Message });
             }
         }
 
@@ -207,19 +191,15 @@ namespace VibeCity_API.Data
             _context.Buildings.Remove(building);
             await _context.SaveChangesAsync();
 
-            return Ok(new
-            {
-                success = true,
-                buildingId = id
-            });
+            return Ok(new { success = true, buildingId = id });
         }
 
-        // 4. API Đăng nhập - PHASE 3: Trả VibeCoin khi Login
+        // 4. API Đăng nhập - SỬ DỤNG DỊCH VỤ JWT CHUNG
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] Student loginInfo)
         {
             if (loginInfo == null)
-                return BadRequest(new { error = "Request body null!" });
+                return BadRequest(new { error = "Dữ liệu trống!" });
 
             if (string.IsNullOrWhiteSpace(loginInfo.StudentId) || string.IsNullOrWhiteSpace(loginInfo.Password))
             {
@@ -227,7 +207,7 @@ namespace VibeCity_API.Data
             }
 
             var student = await _context.Students
-             .FirstOrDefaultAsync(s => s.StudentId == loginInfo.StudentId);
+                .FirstOrDefaultAsync(s => s.StudentId == loginInfo.StudentId);
 
             if (student == null)
                 return Unauthorized(new { error = "Sai Username hoặc mật khẩu!" });
@@ -237,30 +217,10 @@ namespace VibeCity_API.Data
             if (!ok)
                 return Unauthorized(new { error = "Sai Username hoặc mật khẩu!" });
 
-            var tokenHandler = new JwtSecurityTokenHandler();
-            var jwtKey = Environment.GetEnvironmentVariable("Jwt_Key") ?? _configuration["Jwt:Key"] ?? "Key_Mac_Dinh_Sieu_Bao_Mat_VibeCity_2026";
-            var key = Encoding.UTF8.GetBytes(jwtKey);
+            // Ký Token bằng JwtTokenService chung
+            string tokenString = _jwtTokenService.CreateStudentToken(student);
 
-            var tokenDescriptor = new SecurityTokenDescriptor
-            {
-                Subject = new ClaimsIdentity(new[]
-                {
-                    new Claim(ClaimTypes.Name, student.StudentId),
-                    new Claim("StudentId", student.StudentId),
-                    new Claim("FullName", student.FullName),
-                    new Claim("Major", student.Major),
-                    new Claim("Gpa", student.Gpa.ToString())
-                }),
-                Expires = DateTime.UtcNow.AddDays(7),
-                Issuer = _configuration["Jwt:Issuer"],
-                Audience = _configuration["Jwt:Audience"],
-                SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
-            };
-
-            var token = tokenHandler.CreateToken(tokenDescriptor);
-            var tokenString = tokenHandler.WriteToken(token);
-
-            Console.WriteLine($"✅ Sinh viên {student.FullName} đã đăng nhập thành công và cấp Token.");
+            Console.WriteLine($"✅ Sinh viên {student.FullName} đăng nhập thành công.");
 
             return Ok(new
             {
@@ -273,7 +233,7 @@ namespace VibeCity_API.Data
                 unlockedSkills = student.UnlockedSkills,
                 survivedDays = student.SurvivedDays,
                 totalSurvivalMinutes = student.TotalSurvivalMinutes,
-                vibeCoin = student.VibeCoin // Đã thêm ở Phase 3
+                vibeCoin = student.VibeCoin
             });
         }
 
@@ -284,18 +244,16 @@ namespace VibeCity_API.Data
             if (string.IsNullOrWhiteSpace(studentId))
                 return BadRequest(new { error = "Thiếu studentId!" });
 
-            bool exists = await _context.Students
-                .AnyAsync(s => s.StudentId == studentId);
-
+            bool exists = await _context.Students.AnyAsync(s => s.StudentId == studentId);
             return Ok(new { exists });
         }
 
-        // 6. API Đăng ký tài khoản - PHASE 4: Gán tiền mặc định khi đăng ký
+        // 6. API Đăng ký tài khoản - Gán tiền mặc định
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] Student newUser)
         {
             if (newUser == null)
-                return BadRequest(new { error = "Request body null!" });
+                return BadRequest(new { error = "Dữ liệu trống!" });
 
             newUser.StudentId = newUser.StudentId?.Trim() ?? "";
             newUser.Password = newUser.Password ?? "";
@@ -317,22 +275,18 @@ namespace VibeCity_API.Data
             if (newUser.Gpa < 0 || newUser.Gpa > 4)
                 return BadRequest(new { error = "GPA phải nằm trong khoảng 0 - 4!" });
 
-            bool exists = await _context.Students
-                .AnyAsync(s => s.StudentId == newUser.StudentId);
-
+            bool exists = await _context.Students.AnyAsync(s => s.StudentId == newUser.StudentId);
             if (exists)
-                return BadRequest(new { error = "Username/StudentId này đã được đăng ký rồi!" });
+                return BadRequest(new { error = "Username này đã được sử dụng!" });
 
             try
             {
                 newUser.Id = 0;
                 newUser.Password = BCrypt.Net.BCrypt.HashPassword(newUser.Password);
-                newUser.VibeCoin = 1000; // Đã thêm ở Phase 4
+                newUser.VibeCoin = 1000; // Tiền mặc định
 
                 _context.Students.Add(newUser);
                 await _context.SaveChangesAsync();
-
-                Console.WriteLine($"✅ Đăng ký thành công: {newUser.StudentId} - {newUser.FullName}");
 
                 return Ok(new
                 {
@@ -341,20 +295,16 @@ namespace VibeCity_API.Data
                     fullName = newUser.FullName,
                     major = newUser.Major,
                     gpa = newUser.Gpa,
-                    vibeCoin = newUser.VibeCoin // Đã thêm ở Phase 4
+                    vibeCoin = newUser.VibeCoin
                 });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new
-                {
-                    error = "Lỗi khi đăng ký tài khoản!",
-                    detail = ex.Message
-                });
+                return StatusCode(500, new { error = "Lỗi khi đăng ký tài khoản!", detail = ex.Message });
             }
         }
 
-        // 7. API Mở khóa kỹ năng (POST) - ĐÃ BẢO MẬT
+        // 7. API Mở khóa kỹ năng (POST)
         [Authorize]
         [HttpPost("unlock-skill")]
         public async Task<IActionResult> UnlockSkill([FromBody] SkillUpdateRequest request)
@@ -394,7 +344,7 @@ namespace VibeCity_API.Data
             }
         }
 
-        // 8. API Tích lũy tiến trình ngày đêm khi thoát game
+        // 8. API Tích lũy tiến trình ngày đêm
         [Authorize]
         [HttpPost("complete-night")]
         public async Task<IActionResult> CompleteNight([FromBody] QuitGameProgressRequest request)
@@ -410,16 +360,10 @@ namespace VibeCity_API.Data
                 var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == studentId);
                 if (student == null)
                 {
-                    return NotFound(new { error = "Sinh viên không tồn tại trong hệ thống VibeCity!" });
+                    return NotFound(new { error = "Sinh viên không tồn tại!" });
                 }
 
                 double actualMinutes = Math.Abs(request.SurvivalTime);
-                string timeStatusText = request.SurvivalTime < 0
-                    ? $"BAN ĐÊM (Nhận số âm: {request.SurvivalTime}p)"
-                    : $"BAN NGÀY (Nhận số dương: {request.SurvivalTime}p)";
-
-                Console.WriteLine($"[VibeCity] Sinh viên {studentId} tắt game lúc {timeStatusText}. Thời gian chơi session này: {actualMinutes} phút.");
-
                 student.SurvivedDays += request.SurvivedDays;
                 student.TotalSurvivalMinutes += actualMinutes;
 
@@ -428,7 +372,7 @@ namespace VibeCity_API.Data
                 return Ok(new
                 {
                     success = true,
-                    message = "Đã tích lũy số ngày và số phút sinh tồn khi tắt game thành công!",
+                    message = "Đã tích lũy tiến trình thành công!",
                     savedMinutes = actualMinutes,
                     totalDays = student.SurvivedDays,
                     totalSurvivalMinutes = student.TotalSurvivalMinutes
@@ -436,40 +380,29 @@ namespace VibeCity_API.Data
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = "Lỗi xử lý hệ thống ngày đêm tại Server!", detail = ex.Message });
+                return StatusCode(500, new { error = "Lỗi xử lý hệ thống ngày đêm!", detail = ex.Message });
             }
         }
 
-        // 9. API Ẩn đánh thức Server Render
+        // 9. API Ping đánh thức
         [AllowAnonymous]
         [HttpGet("ping")]
         public IActionResult PingServer()
         {
-            Console.WriteLine("⏰ [WakeUp] Unity vừa gọi API Ping để đánh thức Server!");
-            return Ok(new
-            {
-                success = true,
-                message = "Pong! Server VibeCity đã sẵn sàng hoạt động."
-            });
+            return Ok(new { success = true, message = "Pong! Server VibeCity đã sẵn sàng hoạt động." });
         }
 
-        // PHASE 5 — API lấy tài khoản và VibeCoin cho Map 2
+        // API tải lại hồ sơ độc lập của Map 2
         [Authorize]
         [HttpGet("map2-profile")]
         public async Task<IActionResult> GetMap2Profile()
         {
             try
             {
-                // StudentId được đọc trực tiếp từ JWT của người chơi
                 string? studentId = User.Identity?.Name;
-
                 if (string.IsNullOrWhiteSpace(studentId))
                 {
-                    return Unauthorized(new
-                    {
-                        success = false,
-                        error = "Không đọc được StudentId từ JWT."
-                    });
+                    return Unauthorized(new { success = false, error = "Không đọc được thông tin xác thực." });
                 }
 
                 var student = await _context.Students
@@ -478,11 +411,7 @@ namespace VibeCity_API.Data
 
                 if (student == null)
                 {
-                    return NotFound(new
-                    {
-                        success = false,
-                        error = "Không tìm thấy tài khoản sinh viên."
-                    });
+                    return NotFound(new { success = false, error = "Không tìm thấy sinh viên." });
                 }
 
                 return Ok(new
@@ -497,12 +426,7 @@ namespace VibeCity_API.Data
             }
             catch (Exception ex)
             {
-                Console.WriteLine("[Map2 Profile] Error: " + ex.Message);
-                return StatusCode(500, new
-                {
-                    success = false,
-                    error = "Server không tải được tài khoản Map 2."
-                });
+                return StatusCode(500, new { success = false, error = "Lỗi server!", detail = ex.Message });
             }
         }
     }
