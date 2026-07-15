@@ -283,7 +283,7 @@ namespace VibeCity_API.Data
             {
                 newUser.Id = 0;
                 newUser.Password = BCrypt.Net.BCrypt.HashPassword(newUser.Password);
-                newUser.VibeCoin = 1000; // Tiền mặc định
+                newUser.VibeCoin = 100; // Tiền mặc định
 
                 _context.Students.Add(newUser);
                 await _context.SaveChangesAsync();
