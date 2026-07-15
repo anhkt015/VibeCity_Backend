@@ -1,82 +1,71 @@
+using Microsoft.EntityFrameworkCore;
 using System;
-using System.Net.Http;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
-using Newtonsoft.Json; // Hãy chắc chắn ông đã cài Newtonsoft.Json qua NuGet
+using VibeCity_API.Data;
 
-namespace Google_GenerativeAI
+namespace VibeCity_API.Services
 {
-    public class AiResponse
+    public interface IChickenIncomeService
     {
-        // Sử dụng string? để giải quyết cảnh báo CS8618
-        public string? Text { get; set; }
+        Task<HouseChickenIncome> ProcessIncomeAsync(string houseOwnerStudentId, CancellationToken cancellationToken);
     }
 
-    public class GenerativeModel
+    public class ChickenIncomeService : IChickenIncomeService
     {
-        private readonly string _apiKey;
-        private readonly string _model;
+        private readonly AppDbContext _context;
 
-        // Sử dụng static HttpClient là chuẩn xác để chạy ổn định trên Render
-        private static readonly HttpClient _client = new HttpClient();
-
-        public GenerativeModel(string apiKey, string model)
+        public ChickenIncomeService(AppDbContext context)
         {
-            _apiKey = apiKey;
-            _model = model;
+            _context = context;
         }
 
-        public async Task<AiResponse> GenerateContentAsync(string prompt)
+        public async Task<HouseChickenIncome> ProcessIncomeAsync(string houseOwnerStudentId, CancellationToken cancellationToken)
         {
-            try
-            {
-                // Đảm bảo URL sử dụng v1beta hoặc v1 tùy theo key của ông
-                string url = $"https://generativelanguage.googleapis.com/v1beta/models/{_model}:generateContent?key={_apiKey}";
+            var now = DateTime.UtcNow;
+            // Làm tròn thời gian hiện tại xuống đầu giờ (Ví dụ: 14:35 -> 14:00)
+            var currentHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
 
-                // SỬA LỖI 400: Định nghĩa cấu trúc Object tường minh thay vì dùng kiểu ẩn danh lồng nhau phức tạp
-                var payload = new
+            var income = await _context.HouseChickenIncomes
+                .FirstOrDefaultAsync(x => x.HouseOwnerStudentId == houseOwnerStudentId, cancellationToken);
+
+            // Đếm số gà đang hoạt động tại căn nhà này từ DB thực tế
+            int chickenCount = await _context.AnimalInstances.CountAsync(x =>
+                x.HouseOwnerStudentId == houseOwnerStudentId &&
+                x.AnimalType == "CHICKEN" &&
+                x.IsActive, cancellationToken);
+
+            if (income == null)
+            {
+                // Chưa từng có lịch sử tích lũy, tạo mới bắt đầu từ giờ hiện tại
+                income = new HouseChickenIncome
                 {
-                    contents = new[]
-                    {
-                        new
-                        {
-                            parts = new[]
-                            {
-                                new { text = prompt }
-                            }
-                        }
-                    }
+                    HouseOwnerStudentId = houseOwnerStudentId,
+                    PendingCoin = 0,
+                    LastProcessedHour = currentHour,
+                    UpdatedAt = now
                 };
-
-                string json = JsonConvert.SerializeObject(payload);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                // Gửi request POST đến Google
-                var response = await _client.PostAsync(url, content);
-                var responseBody = await response.Content.ReadAsStringAsync();
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    // In chi tiết "lời mắng" của Google ra console Render để ông dễ soi lỗi
-                    Console.WriteLine($"❌ Gemini API Error Details: {responseBody}");
-                    return new AiResponse { Text = $"Lỗi API {response.StatusCode}: {responseBody}" };
-                }
-
-                // Giải mã JSON kết quả
-                dynamic? result = JsonConvert.DeserializeObject(responseBody);
-
-                // Sử dụng toán tử điều kiện null (?) để tránh crash nếu cấu trúc trả về thay đổi
-                string aiText = result?.candidates?[0]?.content?.parts?[0]?.text
-                                ?? "AI đã nhận lệnh nhưng không có nội dung trả về.";
-
-                return new AiResponse { Text = aiText };
+                _context.HouseChickenIncomes.Add(income);
+                await _context.SaveChangesAsync(cancellationToken);
+                return income;
             }
-            catch (Exception ex)
+
+            // Tính số giờ đầy đủ thực tế đã trôi qua kể từ lần xử lý trước
+            double elapsedHoursDouble = (currentHour - income.LastProcessedHour).TotalHours;
+            int elapsedHours = (int)Math.Floor(elapsedHoursDouble);
+
+            if (elapsedHours > 0)
             {
-                // Bắt các lỗi kết nối mạng hoặc SSL
-                Console.WriteLine($"❌ Connection Error: {ex.Message}");
-                return new AiResponse { Text = $"Lỗi kết nối hệ thống: {ex.Message}" };
+                // Công thức: Giờ trôi qua * Số gà * 10 VibeCoin
+                int generatedCoin = elapsedHours * chickenCount * 10;
+                income.PendingCoin += generatedCoin;
+                income.LastProcessedHour = income.LastProcessedHour.AddHours(elapsedHours);
+                income.UpdatedAt = now;
+
+                await _context.SaveChangesAsync(cancellationToken);
             }
+
+            return income;
         }
     }
 }

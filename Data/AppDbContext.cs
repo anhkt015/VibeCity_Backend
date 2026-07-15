@@ -12,6 +12,7 @@ namespace VibeCity_API.Data
     public class TeleportTicket
     {
         [Key]
+        [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         [Column("id")]
         public long Id { get; set; }
 
