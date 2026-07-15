@@ -89,5 +89,18 @@ app.UseAuthentication(); // PHẢI CHẠY TRƯỚC AUTHORIZATION!
 app.UseAuthorization();
 
 app.MapControllers();
+using (var scope = app.Services.CreateScope())
+{
+    try
+    {
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.Database.Migrate(); // Tự động chạy Migration tạo bảng teleport_tickets trên Supabase
+        Console.WriteLine("=== ĐÃ CHẠY MIGRATION VÀ CẬP NHẬT DATABASE THÀNH CÔNG ===");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"=== LỖI KHI CHẠY MIGRATION: {ex.Message} ===");
+    }
+}
 
 app.Run();

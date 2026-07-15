@@ -9,6 +9,7 @@ namespace VibeCity_API.Data
     public class TeleportTicket
     {
         [Key]
+        [Column("id")] // <--- BẠN THÊM ĐÚNG DÒNG NÀY VÀO ĐÂY NHA!
         public int Id { get; set; }
 
         [Column("student_id")]
