@@ -237,6 +237,7 @@ namespace VibeCity_API.Data
             });
         }
 
+
         // 5. API Kiểm tra tài khoản
         [HttpGet("check")]
         public async Task<IActionResult> CheckUser([FromQuery] string studentId)
@@ -391,6 +392,74 @@ namespace VibeCity_API.Data
         {
             return Ok(new { success = true, message = "Pong! Server VibeCity đã sẵn sàng hoạt động." });
         }
+        // 10. API Yêu cầu dịch chuyển (Từ Map 1)
+        [Authorize]
+        [HttpPost("generate-ticket")]
+        public async Task<IActionResult> RequestTeleport()
+        {
+            var studentId = User.Identity?.Name;
+            if (string.IsNullOrEmpty(studentId))
+            {
+                return Unauthorized(new { success = false, message = "Không xác thực được sinh viên." });
+            }
+
+            try
+            {
+                string ticketCode = Guid.NewGuid().ToString("N");
+                var ticket = new TeleportTicket
+                {
+                    StudentId = studentId,
+                    TicketCode = ticketCode,
+                    CreatedAt = DateTime.UtcNow,
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(2)
+                };
+
+                _context.TeleportTickets.Add(ticket);
+                await _context.SaveChangesAsync();
+
+                return Ok(new { success = true, code = ticketCode });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = "Lỗi tạo vé.", detail = ex.Message });
+            }
+        }
+
+        // 11. API Đổi vé lấy Token (Dùng ở Map 2)
+        [AllowAnonymous]
+        [HttpPost("exchange-ticket")]
+        public async Task<IActionResult> ExchangeTeleport([FromBody] ExchangeRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Code))
+                return BadRequest(new { success = false, message = "Mã vé trống!" });
+
+            try
+            {
+                var ticket = await _context.TeleportTickets
+                    .FirstOrDefaultAsync(t => t.TicketCode == request.Code);
+
+                if (ticket == null || DateTime.UtcNow > ticket.ExpiresAt)
+                {
+                    if (ticket != null) _context.TeleportTickets.Remove(ticket);
+                    await _context.SaveChangesAsync();
+                    return BadRequest(new { success = false, message = "Vé không hợp lệ hoặc hết hạn!" });
+                }
+
+                var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == ticket.StudentId);
+                if (student == null) return NotFound(new { success = false, message = "Không tìm thấy sinh viên." });
+
+                _context.TeleportTickets.Remove(ticket);
+                await _context.SaveChangesAsync();
+
+                string token = _jwtTokenService.CreateStudentToken(student);
+
+                return Ok(new { success = true, token, studentId = student.StudentId, fullName = student.FullName });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = "Lỗi xác thực vé.", detail = ex.Message });
+            }
+        }
 
         // API tải lại hồ sơ độc lập của Map 2
         [Authorize]
@@ -506,5 +575,9 @@ namespace VibeCity_API.Data
     public class ClaimDawnGateRequest
     {
         public string NightCycleId { get; set; } = string.Empty;
+    }
+    public class ExchangeRequest
+    {
+        public string Code { get; set; } = string.Empty;
     }
 }
